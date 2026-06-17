@@ -4,7 +4,7 @@ registry = CollectorRegistry()
 
 requests_total = Counter(
     "correct_requests_total",
-    "Number of /v1/correct calls.",
+    "Number of /v1/correct calls by mode, model, and outcome.",
     ["mode", "model", "status"],
     registry=registry,
 )
