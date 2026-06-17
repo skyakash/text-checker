@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from ..providers.registry import get_registry
 from .schemas import CorrectRequest, CorrectResponse, Mode
 
 router = APIRouter()
@@ -17,4 +18,4 @@ async def modes() -> list[str]:
 
 @router.get("/models")
 async def models() -> list[str]:
-    return []
+    return get_registry().available_models()
