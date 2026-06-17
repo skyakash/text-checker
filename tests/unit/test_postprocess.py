@@ -44,6 +44,41 @@ def test_guard_rejects_when_edit_ratio_exceeds_threshold_for_grammar() -> None:
     assert "edit ratio" in reason
 
 
+def test_guard_allows_short_input_with_multiple_grammar_fixes() -> None:
+    # Regression: previously rejected because 0.30 threshold was too strict
+    # for short inputs with multiple errors.
+    passed, _ = hallucination_guard(
+        "their going home tonigt",
+        "They're going home tonight.",
+        Mode.GRAMMAR,
+    )
+    assert passed
+
+
+def test_guard_rejects_when_masked_token_is_dropped() -> None:
+    masks = {"<<MASK_0>>": "@alice", "<<MASK_1>>": "https://example.com/docs"}
+    passed, reason = hallucination_guard(
+        "see @alice or https://example.com/docs",
+        "see them or check the link",
+        Mode.RELEASE_NOTE,
+        masks=masks,
+    )
+    assert not passed
+    assert reason is not None
+    assert "dropped masked token" in reason
+
+
+def test_guard_passes_when_all_masked_tokens_survive() -> None:
+    masks = {"<<MASK_0>>": "@alice", "<<MASK_1>>": "PROJ-7"}
+    passed, _ = hallucination_guard(
+        "ping @alice about PROJ-7",
+        "Ping @alice about PROJ-7.",
+        Mode.GRAMMAR,
+        masks=masks,
+    )
+    assert passed
+
+
 def test_guard_rejects_leftover_mask_placeholder_in_output() -> None:
     passed, reason = hallucination_guard(
         "see this please", "see <<MASK_99>> please", Mode.GRAMMAR

@@ -25,17 +25,21 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
     raw = gen_resp.text.strip()
     candidate = preprocess.unmask(raw, masked.masks)
 
-    passed, reason = postprocess.hallucination_guard(req.text, candidate, req.mode)
+    passed, reason = postprocess.hallucination_guard(
+        req.text, candidate, req.mode, masked.masks
+    )
     if passed:
         corrected = candidate
         diff = postprocess.structured_diff(req.text, candidate)
         flagged = False
         flag_reason: str | None = None
+        model_output: str | None = None
     else:
         corrected = req.text
         diff = []
         flagged = True
         flag_reason = reason
+        model_output = candidate
 
     return CorrectResponse(
         request_id=str(uuid4()),
@@ -44,6 +48,7 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
         model_used=gen_resp.model,
         flagged=flagged,
         flag_reason=flag_reason,
+        model_output=model_output,
         metrics=CorrectMetrics(
             latency_ms=latency_ms,
             tokens_in=gen_resp.tokens_in,

@@ -38,4 +38,5 @@ class CorrectResponse(BaseModel):
     model_used: str
     flagged: bool = False
     flag_reason: str | None = None
+    model_output: str | None = None
     metrics: CorrectMetrics

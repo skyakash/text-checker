@@ -11,8 +11,8 @@ class DiffChunk(TypedDict):
 
 
 _EDIT_RATIO_THRESHOLD: dict[Mode, float] = {
-    Mode.GRAMMAR: 0.30,
-    Mode.STYLE: 0.55,
+    Mode.GRAMMAR: 0.45,
+    Mode.STYLE: 0.60,
     Mode.JIRA_STORY: 0.80,
     Mode.RELEASE_NOTE: 0.80,
 }
@@ -43,10 +43,18 @@ def structured_diff(original: str, corrected: str) -> list[DiffChunk]:
 
 
 def hallucination_guard(
-    original: str, corrected: str, mode: Mode
+    original: str,
+    corrected: str,
+    mode: Mode,
+    masks: dict[str, str] | None = None,
 ) -> tuple[bool, str | None]:
     if "<<MASK_" in corrected:
         return False, "model dropped or altered a masked placeholder"
+
+    if masks:
+        for original_value in masks.values():
+            if original_value not in corrected:
+                return False, f"model dropped masked token {original_value!r}"
 
     ratio = edit_ratio(original, corrected)
     threshold = _EDIT_RATIO_THRESHOLD[mode]
