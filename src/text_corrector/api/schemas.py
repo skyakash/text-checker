@@ -36,4 +36,6 @@ class CorrectResponse(BaseModel):
     corrected_text: str
     diff: list[dict] = Field(default_factory=list)
     model_used: str
+    flagged: bool = False
+    flag_reason: str | None = None
     metrics: CorrectMetrics
