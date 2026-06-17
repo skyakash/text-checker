@@ -57,3 +57,6 @@ mypy_path = "src"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers"
+markers = [
+    "integration: end-to-end tests that require a running Ollama server",
+]

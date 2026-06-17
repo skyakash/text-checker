@@ -9,6 +9,12 @@ dev:
 test:
 	uv run pytest
 
+test-integration:
+	uv run pytest -m integration -v
+
+eval:
+	uv run python -m text_corrector.eval $(ARGS)
+
 lint:
 	uv run ruff check .
 
