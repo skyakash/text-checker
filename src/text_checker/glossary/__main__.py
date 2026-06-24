@@ -1,4 +1,7 @@
+from __future__ import annotations
+
 import argparse
+import asyncio
 import sys
 from pathlib import Path
 
@@ -7,6 +10,19 @@ from .store import GlossaryStore, get_store
 
 def _store_for(path: Path | None) -> GlossaryStore:
     return GlossaryStore(path) if path else get_store()
+
+
+def _run_extract(target: Path, model: str | None, recursive: bool) -> list[str]:
+    from ..config import settings
+    from ..providers.registry import get_registry
+    from .extractor import extract_from_path
+
+    reg = get_registry()
+    provider = reg.get("ollama")
+    chosen_model = model or settings.default_model
+    return asyncio.run(
+        extract_from_path(target, provider, chosen_model, recursive=recursive)
+    )
 
 
 def main() -> int:
@@ -24,6 +40,15 @@ def main() -> int:
 
     p_import = sub.add_parser("import", help="import terms from a file (one per line); '-' for stdin")
     p_import.add_argument("file", type=str)
+
+    p_extract = sub.add_parser(
+        "extract",
+        help="ask the LLM to suggest glossary terms from a doc or directory",
+    )
+    p_extract.add_argument("target", type=Path)
+    p_extract.add_argument("--recursive", action="store_true")
+    p_extract.add_argument("--add", action="store_true", dest="do_add", help="add suggested terms to the glossary")
+    p_extract.add_argument("--model", default=None, help="override the LLM model")
 
     sub.add_parser("reset", help="delete all terms")
 
@@ -60,6 +85,19 @@ def main() -> int:
             lines = Path(args.file).read_text().splitlines()
         added = store.import_terms(lines)
         print(f"added {added} new term(s); total: {len(store.terms())}")
+        return 0
+
+    if args.cmd == "extract":
+        terms = _run_extract(args.target, args.model, args.recursive)
+        if not terms:
+            print("(no terms extracted)")
+            return 0
+        for t in terms:
+            print(t)
+        print(f"\n{len(terms)} term(s) extracted")
+        if args.do_add:
+            added = store.import_terms(terms)
+            print(f"added {added} new term(s) to glossary; total: {len(store.terms())}")
         return 0
 
     if args.cmd == "reset":
