@@ -11,6 +11,7 @@ An internal HTTP service that grammar-, style-, and clarity-corrects English tex
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
 - [Setup and first run](#setup-and-first-run)
+- [Quick start: full stack walkthrough](#quick-start-full-stack-walkthrough)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
 - [Worked examples](#worked-examples)
@@ -145,6 +146,158 @@ curl -s http://localhost:8080/healthz
 ```
 
 Stop the stack with `make down`.
+
+## Quick start: full stack walkthrough
+
+A single linear recipe that takes you from a fresh clone to a correction that uses **both** the glossary and RAG. Copy-paste each block in order. Most of the elapsed time is the model download in step 2.
+
+### 1. Clone and install
+
+```bash
+git clone https://github.com/skyakash/text-checker.git
+cd text-checker
+make install
+```
+
+### 2. Pull the two models (one-time)
+
+```bash
+ollama serve &                       # if not already running
+ollama pull qwen2.5:7b-instruct      # ~4.7 GB — corrects text
+ollama pull nomic-embed-text         # ~270 MB — embeds RAG queries
+```
+
+### 3. Start the service
+
+In one shell, leave it running:
+
+```bash
+make dev
+```
+
+In a second shell, confirm it's up:
+
+```bash
+curl -s http://localhost:8080/healthz
+# {"status":"ok"}
+```
+
+### 4. Create a sample product doc
+
+For this walkthrough — substitute your own docs later:
+
+```bash
+mkdir -p sample-docs
+cat > sample-docs/flowstate.md <<'EOF'
+# Flowstate
+
+Flowstate is our flagship collaborative editor.
+
+## Snapshots
+
+The Snapshot Loader reads serialized editor state from disk and
+restores the document tree. Snapshots are taken every 30 seconds.
+
+## Permissions
+
+The Permissions module controls which roles can edit which documents.
+Admin, Editor, and Viewer roles are supported.
+EOF
+```
+
+### 5. Populate the glossary
+
+Two ways. **Manually** for full control:
+
+```bash
+uv run python -m text_checker.glossary add Flowstate
+uv run python -m text_checker.glossary add "Snapshot Loader"
+uv run python -m text_checker.glossary list
+# Flowstate
+# Snapshot Loader
+```
+
+Or **extract from the doc** using the LLM (takes ~10 s on CPU at 7B):
+
+```bash
+uv run python -m text_checker.glossary extract sample-docs/flowstate.md --add
+```
+
+### 6. Ingest the product doc for RAG
+
+```bash
+uv run python -m text_checker.rag ingest sample-docs/flowstate.md --source flowstate
+# ingested source=flowstate files=1 chunks=1
+
+uv run python -m text_checker.rag list
+# flowstate                       1 chunks
+# total: 1 chunks across 1 source(s)
+```
+
+Sanity-check retrieval:
+
+```bash
+uv run python -m text_checker.rag search "snapshot loader fix" --k 2
+# 1. (0.82) flowstate § Snapshots
+#    The Snapshot Loader reads serialized editor state from disk...
+```
+
+### 7. Make a correction that exercises both
+
+A release-note input with a glossary term spelled lowercase and a typo on a feature mentioned in the doc:
+
+```bash
+curl -s -X POST http://localhost:8080/v1/correct \
+  -H 'content-type: application/json' \
+  -d '{
+    "text": "we fixed the snapshot loder in flowstate so users dont lose work",
+    "mode": "release-note",
+    "model": "qwen2.5:7b-instruct"
+  }' | jq
+```
+
+### 8. What to look for in the response
+
+```json
+{
+  "corrected_text": "Fixed the Snapshot Loader in Flowstate so users don't lose work.",
+  "model_used": "qwen2.5:7b-instruct",
+  "flagged": false,
+  "rag_context_used": [
+    {
+      "source": "flowstate",
+      "section": "Snapshots",
+      "score": 0.82,
+      "preview": "The Snapshot Loader reads serialized editor state from disk..."
+    }
+  ],
+  "metrics": {"latency_ms": 1180, "edit_ratio": 0.18}
+}
+```
+
+Three things to verify:
+
+1. **`corrected_text` contains `Flowstate` and `Snapshot Loader` in their canonical case** — the glossary did its job. Even though you typed `flowstate` (lowercase) and `snapshot loder` (typo), the model never saw those tokens (they were masked), and the post-processor restored them from the glossary with the correct spelling.
+2. **`rag_context_used` is non-empty** — RAG found the relevant section. The model's system prompt was augmented with the Snapshots section text, so it knew the term refers to a specific module.
+3. **`flagged: false`** — the hallucination guard accepted the correction.
+
+If any of those don't match, jump to [Troubleshooting](#troubleshooting).
+
+### 9. Update workflow — when product docs change
+
+Re-ingest with the same `--source` to drop stale chunks and replace with fresh content in one command:
+
+```bash
+uv run python -m text_checker.rag ingest sample-docs/flowstate.md --source flowstate
+```
+
+Add new glossary terms as your product evolves:
+
+```bash
+uv run python -m text_checker.glossary add "Workspace"
+```
+
+Both stores persist under `./data/` (gitignored). Back up the directory to back up your knowledge base.
 
 ## Configuration
 
