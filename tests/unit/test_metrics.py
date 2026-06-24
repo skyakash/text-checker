@@ -3,9 +3,9 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from text_corrector.config import Settings
-from text_corrector.providers import registry as registry_module
-from text_corrector.providers.registry import ProviderRegistry
+from text_checker.config import Settings
+from text_checker.providers import registry as registry_module
+from text_checker.providers.registry import ProviderRegistry
 
 
 def _mock_ok(text: str = "They're going home.") -> httpx.Response:

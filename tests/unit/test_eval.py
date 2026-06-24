@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from text_corrector.eval.runner import load_dataset
-from text_corrector.eval.scoring import edit_ratio_vs_expected, exact_match
+from text_checker.eval.runner import load_dataset
+from text_checker.eval.scoring import edit_ratio_vs_expected, exact_match
 
 
 def test_exact_match_ignores_surrounding_whitespace() -> None:

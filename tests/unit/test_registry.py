@@ -1,8 +1,8 @@
 import pytest
 
-from text_corrector.api.schemas import QualityTier
-from text_corrector.config import Settings
-from text_corrector.providers.registry import ProviderRegistry
+from text_checker.api.schemas import QualityTier
+from text_checker.config import Settings
+from text_checker.providers.registry import ProviderRegistry
 
 
 @pytest.fixture

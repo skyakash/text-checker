@@ -4,7 +4,7 @@ install:
 	uv sync --all-extras --group dev
 
 dev:
-	uv run uvicorn text_corrector.main:app --reload --host 0.0.0.0 --port 8080
+	uv run uvicorn text_checker.main:app --reload --host 0.0.0.0 --port 8080
 
 test:
 	uv run pytest
@@ -13,7 +13,7 @@ test-integration:
 	uv run pytest -m integration -v
 
 eval:
-	uv run python -m text_corrector.eval $(ARGS)
+	uv run python -m text_checker.eval $(ARGS)
 
 lint:
 	uv run ruff check .
@@ -31,7 +31,7 @@ down:
 	docker compose down
 
 build:
-	docker build -t text-corrector:dev .
+	docker build -t text-checker:dev .
 
 clean:
 	rm -rf .pytest_cache .ruff_cache .mypy_cache dist build

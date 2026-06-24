@@ -10,7 +10,7 @@ from .scoring import edit_ratio_vs_expected, exact_match
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="text_corrector.eval")
+    parser = argparse.ArgumentParser(prog="text_checker.eval")
     parser.add_argument("--service-url", default="http://localhost:8080")
     parser.add_argument("--api-key", default=None)
     parser.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)

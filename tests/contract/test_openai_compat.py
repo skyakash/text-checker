@@ -4,8 +4,8 @@ import httpx
 import pytest
 import respx
 
-from text_corrector.providers.base import GenerationRequest
-from text_corrector.providers.openai_compat import OpenAICompatProvider
+from text_checker.providers.base import GenerationRequest
+from text_checker.providers.openai_compat import OpenAICompatProvider
 
 
 @pytest.mark.asyncio

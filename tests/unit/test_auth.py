@@ -3,9 +3,9 @@ import pytest
 import respx
 from fastapi.testclient import TestClient
 
-from text_corrector.config import Settings
-from text_corrector.providers import registry as registry_module
-from text_corrector.providers.registry import ProviderRegistry
+from text_checker.config import Settings
+from text_checker.providers import registry as registry_module
+from text_checker.providers.registry import ProviderRegistry
 
 
 def _mock_ok() -> httpx.Response:
@@ -21,7 +21,7 @@ def _mock_ok() -> httpx.Response:
 
 @pytest.fixture
 def authed_client(monkeypatch: pytest.MonkeyPatch, client: TestClient) -> TestClient:
-    from text_corrector.config import settings
+    from text_checker.config import settings
 
     monkeypatch.setattr(settings, "api_keys", "key-good,other-good")
     reg = ProviderRegistry(Settings(ollama_base_url="http://ollama.test/v1"))

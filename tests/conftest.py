@@ -1,8 +1,8 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from text_corrector.api import idempotency, ratelimit
-from text_corrector.main import app
+from text_checker.api import idempotency, ratelimit
+from text_checker.main import app
 
 
 @pytest.fixture(autouse=True)

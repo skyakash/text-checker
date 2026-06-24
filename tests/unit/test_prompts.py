@@ -1,5 +1,5 @@
-from text_corrector.api.schemas import Mode
-from text_corrector.pipeline.prompts import system_prompt, user_prompt
+from text_checker.api.schemas import Mode
+from text_checker.pipeline.prompts import system_prompt, user_prompt
 
 
 def test_each_mode_has_distinct_system_prompt() -> None:

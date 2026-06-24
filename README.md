@@ -1,4 +1,4 @@
-# text-corrector
+# text-checker
 
 An internal HTTP service that grammar-, style-, and clarity-corrects English text on behalf of other internal tools. One API, swappable LLM backends, observable.
 
@@ -386,9 +386,9 @@ A Prometheus scrape config snippet:
 
 ```yaml
 scrape_configs:
-  - job_name: text-corrector
+  - job_name: text-checker
     static_configs:
-      - targets: ["text-corrector:8080"]
+      - targets: ["text-checker:8080"]
     metrics_path: /metrics/
 ```
 
@@ -440,7 +440,7 @@ The codebase is type-checked under `mypy --strict`. CI (when added) will run `li
 
 ```
 text-checker/
-├── src/text_corrector/
+├── src/text_checker/
 │   ├── api/             HTTP layer: routes, schemas, auth, rate limit, idempotency
 │   ├── pipeline/        Pre-process, prompts, orchestrator, post-process, exceptions
 │   ├── providers/       Provider abstraction, OpenAI-compat client, registry

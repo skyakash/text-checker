@@ -11,7 +11,7 @@ from .observability.metrics import metrics_app
 configure_logging(settings.log_level)
 log = get_logger()
 
-app = FastAPI(title="text-corrector", version="0.1.0")
+app = FastAPI(title="text-checker", version="0.1.0")
 app.include_router(router, prefix="/v1")
 app.mount("/metrics", metrics_app)
 

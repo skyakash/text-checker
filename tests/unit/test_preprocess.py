@@ -1,7 +1,7 @@
 import pytest
 
-from text_corrector.pipeline.exceptions import InputTooLongError, NonEnglishInputError
-from text_corrector.pipeline.preprocess import (
+from text_checker.pipeline.exceptions import InputTooLongError, NonEnglishInputError
+from text_checker.pipeline.preprocess import (
     is_likely_english,
     mask,
     preprocess,

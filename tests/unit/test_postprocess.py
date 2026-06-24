@@ -1,5 +1,5 @@
-from text_corrector.api.schemas import Mode
-from text_corrector.pipeline.postprocess import (
+from text_checker.api.schemas import Mode
+from text_checker.pipeline.postprocess import (
     edit_ratio,
     hallucination_guard,
     structured_diff,

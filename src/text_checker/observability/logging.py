@@ -18,5 +18,5 @@ def configure_logging(level: str = "INFO") -> None:
     )
 
 
-def get_logger(name: str = "text_corrector") -> structlog.stdlib.BoundLogger:
+def get_logger(name: str = "text_checker") -> structlog.stdlib.BoundLogger:
     return structlog.get_logger(name)
