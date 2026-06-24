@@ -47,3 +47,5 @@ Status flow: `Proposed → Accepted → Superseded by NNNN`. We don't delete sup
 | [0006](0006-edit-ratio-thresholds.md) | Per-mode edit-ratio thresholds, tuned after live testing | Accepted |
 | [0007](0007-in-memory-state-stage1.md) | In-memory rate-limit and idempotency for Stage 1 | Accepted |
 | [0008](0008-english-only-no-chunker.md) | English-only inputs with a 5000-char hard limit | Accepted |
+| [0009](0009-chroma-embedded-for-rag-store.md) | Chroma embedded for the RAG vector store, with a planned swap to pgvector | Accepted |
+| [0010](0010-llm-based-glossary-extraction.md) | LLM-based glossary extraction from product docs | Accepted |

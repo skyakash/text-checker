@@ -1,6 +1,6 @@
 # text-checker
 
-An internal HTTP service that grammar-, style-, and clarity-corrects English text on behalf of other internal tools. One API, swappable LLM backends, observable.
+An internal HTTP service that grammar-, style-, and clarity-corrects English text on behalf of other internal tools. One API, swappable LLM backends, observable, grounded with your product knowledge.
 
 ---
 
@@ -15,6 +15,8 @@ An internal HTTP service that grammar-, style-, and clarity-corrects English tex
 - [API reference](#api-reference)
 - [Worked examples](#worked-examples)
 - [Modes](#modes)
+- [Glossary (protected terms)](#glossary-protected-terms)
+- [RAG over product docs](#rag-over-product-docs)
 - [Operating the service](#operating-the-service)
 - [Testing](#testing)
 - [Development workflow](#development-workflow)
@@ -33,16 +35,17 @@ Existing solutions don't fit:
 - Cloud LLM APIs (Claude, GPT) work but introduce cost, latency, and a hard external dependency for an internal workflow.
 - Hand-rolling a model integration per tool means each tool reimplements masking, prompt templating, hallucination checks, and metrics.
 
-What we need is a single HTTP service that any internal tool can call, that runs on locally-hosted models by default, and that we can point at a better model the day one shows up.
+What we need is a single HTTP service that any internal tool can call, that runs on locally-hosted models by default, that understands our product terminology, and that we can point at a better model the day one shows up.
 
 ## Solution approach
 
 A small FastAPI service that wraps an LLM behind a deterministic pipeline:
 
-1. **Pre-process**: mask code blocks, URLs, `@mentions`, and ticket IDs (`PROJ-123`) with placeholder tokens so the LLM never rewrites them. Reject non-English and oversized inputs.
-2. **Prompt build**: pick a per-mode system prompt (grammar, style, jira-story, release-note).
-3. **LLM call**: send the masked text to the configured provider.
-4. **Post-process**: unmask placeholders, compute a structured diff, and run a hallucination guard before returning anything.
+1. **Pre-process**: mask code blocks, URLs, `@mentions`, ticket IDs (`PROJ-123`), and **glossary terms** (your product names, feature names, jargon) with placeholder tokens so the LLM never rewrites them. Reject non-English and oversized inputs.
+2. **RAG retrieval**: when product docs have been ingested, find the top-K most relevant chunks for this input via embedding similarity and inject them into the system prompt as labeled context.
+3. **Prompt build**: pick a per-mode system prompt (grammar, style, jira-story, release-note), augmented with RAG context if any.
+4. **LLM call**: send the masked text to the configured provider.
+5. **Post-process**: unmask placeholders, compute a structured diff, and run a hallucination guard before returning anything.
 
 Every provider speaks the same OpenAI-compatible chat-completions API, so swapping Ollama for vLLM, llama.cpp, Anthropic, or OpenAI is a config change, not a code change. The service ships with Ollama as the default and a cloud-fallback path that activates only when an API key is configured.
 
@@ -68,10 +71,15 @@ flowchart TD
 
   subgraph Pipeline [Correction pipeline]
     direction LR
-    PRE["Pre-process<br/>mask · validate"] --> PROMPT["Prompt build<br/>per-mode template"]
+    PRE["Pre-process<br/>mask · glossary · validate"] --> RETR["Retrieve<br/>top-K product context"]
+    RETR --> PROMPT["Prompt build<br/>per-mode + context"]
     PROMPT --> LLM["LLM call<br/>via provider"]
     LLM --> POST["Post-process<br/>diff · guard"]
   end
+
+  PRE -. reads .-> GLOSS[(Glossary<br/>JSON file)]
+  RETR -. reads .-> RAG[(Chroma<br/>vector store)]
+  RAG -. embeddings .-> EMB[Ollama<br/>nomic-embed-text]
 
   LLM --> PROV
   PROV["Provider abstraction<br/>OpenAI-compatible HTTP"]
@@ -82,12 +90,13 @@ flowchart TD
 
 Key design choices, with rationale:
 
-- **Deterministic pipeline around a single LLM call.** Everything that can be done with regex or library code (masking, length checks, diffing, guarding) is done outside the model. The LLM does only what models are good at: producing better-sounding text. This keeps the surface area for nondeterminism small.
+- **Deterministic pipeline around a single LLM call.** Everything that can be done with regex, retrieval, or library code (masking, glossary, RAG retrieval, length checks, diffing, guarding) is done outside the model. The LLM does only what models are good at: producing better-sounding text.
 - **Provider abstraction at the HTTP layer, not the SDK layer.** All providers speak OpenAI-compatible chat-completions, so the service code only knows one protocol. Swapping providers is a `base_url` and `api_key` change.
-- **Hallucination guard with a safe fallback.** The guard checks for leftover masked placeholders, dropped masked tokens, excessive edit ratio (per-mode threshold), and unexpected new capitalized tokens. When it rejects, the service returns the user's original text with `flagged: true` and the rejected `model_output` for debugging — it never returns nonsense silently.
-- **In-memory rate limit and idempotency for Stage 1.** Both are token-bucket / TTL-cache implementations that work for a single replica. Multi-replica deployment in Kubernetes will swap them for Redis — tracked as Phase 1.
+- **Glossary + RAG for product grounding.** Glossary protects exact strings (product names, feature names). RAG injects relevant doc context so the model understands what your products and modules actually *do*. Together they handle the cases that prompt-only solutions miss.
+- **Hallucination guard with a safe fallback.** Four checks catch leftover placeholders, dropped masked tokens (including glossary terms), excessive edit ratio, and new entity injection. When the guard rejects, the service returns the user's original text with `flagged: true` and `model_output` for debugging — it never returns nonsense silently.
+- **In-memory rate limit and idempotency for Stage 1.** Both swap to Redis when the service goes multi-replica (Phase 1).
 
-Full design rationale, locked decisions, and the phased roadmap live in [docs/architecture.md](docs/architecture.md).
+Full design rationale, locked decisions, and the phased roadmap live in [docs/architecture.md](docs/architecture.md). Individual decisions are tracked as [ADRs](docs/decisions/).
 
 ## Prerequisites
 
@@ -95,6 +104,7 @@ Full design rationale, locked decisions, and the phased roadmap live in [docs/ar
 - **Python 3.12+** (the project pins 3.12; uv will fetch it automatically if you don't have it)
 - **[uv](https://docs.astral.sh/uv/)** for dependency management (`brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
 - **An OpenAI-compatible LLM endpoint** — by default the service expects [Ollama](https://ollama.com/) on `localhost:11434`. vLLM, llama.cpp's `llama-server`, or a cloud endpoint all work too.
+- **An embedding model** if you'll use RAG — pull once with `ollama pull nomic-embed-text` (~270 MB).
 - **Docker** (optional) — only needed if you want to run the full local stack (service + Ollama + Prometheus) with `docker compose`.
 
 ## Setup and first run
@@ -108,9 +118,10 @@ cd text-checker
 # install deps (uv will download Python 3.12 if needed)
 make install
 
-# in one shell — start Ollama and pull a model
+# in one shell — start Ollama and pull models
 ollama serve &                       # if it isn't already running
 ollama pull qwen2.5:7b-instruct      # ~4.7 GB; or qwen2.5:0.5b (397 MB) for a quick smoke test
+ollama pull nomic-embed-text         # ~270 MB; only needed if you'll use RAG
 
 # in another shell — start the service
 make dev
@@ -128,6 +139,7 @@ Brings up the service, an Ollama container, and a Prometheus container together.
 ```bash
 make up                                              # starts everything
 docker compose exec ollama ollama pull qwen2.5:0.5b  # pull a model into the Ollama container
+docker compose exec ollama ollama pull nomic-embed-text
 
 curl -s http://localhost:8080/healthz
 ```
@@ -142,7 +154,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 |---|---|---|
 | `LOG_LEVEL` | `INFO` | Standard log levels: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `API_KEYS` | (empty) | Comma-separated list of accepted API keys. **When empty, auth is disabled** — fine for dev, must be set in prod. |
-| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible base URL for the primary provider (works for vLLM and llama.cpp too) |
+| `OLLAMA_BASE_URL` | `http://localhost:11434/v1` | OpenAI-compatible base URL for the primary provider |
 | `DEFAULT_MODEL` | `qwen2.5:7b-instruct` | Model used for `quality_tier=balanced` (the default) |
 | `FAST_MODEL` | `qwen2.5:0.5b` | Model used for `quality_tier=fast` |
 | `ANTHROPIC_API_KEY` | (empty) | When set, Anthropic registers as a cloud provider for `quality_tier=high` |
@@ -151,8 +163,16 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `OPENAI_API_KEY` | (empty) | When set, OpenAI registers as a fallback cloud provider |
 | `OPENAI_BASE_URL` | `https://api.openai.com/v1` | OpenAI's chat-completions endpoint |
 | `OPENAI_MODEL` | `gpt-4o-mini` | Model used when routing to OpenAI |
-| `REDIS_URL` | (empty) | Reserved for Phase 1 (rate-limit + idempotency in Redis) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | Reserved for Phase 1 (OpenTelemetry traces) |
+| `GLOSSARY_PATH` | `./data/glossary.json` | JSON file storing protected terms |
+| `RAG_ENABLED` | `true` | Toggle RAG retrieval. Auto-skips silently when the store is empty. |
+| `RAG_STORE_PATH` | `./data/rag` | Where Chroma persists its embeddings |
+| `RAG_COLLECTION_NAME` | `products` | Collection name within the store |
+| `RAG_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model served via Ollama |
+| `RAG_EMBEDDING_BASE_URL` | (defaults to `OLLAMA_BASE_URL`) | Override if embeddings live elsewhere |
+| `RAG_TOP_K` | `3` | Number of chunks to retrieve and inject |
+| `RAG_MIN_SCORE` | `0.0` | Drop chunks below this cosine similarity |
+| `REDIS_URL` | (empty) | Reserved for Phase 1 |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | Reserved for Phase 1 |
 
 ## API reference
 
@@ -175,7 +195,8 @@ Correct a piece of text.
   "text": "their going home tonigt",
   "mode": "grammar",
   "model": "qwen2.5:7b-instruct",
-  "quality_tier": "balanced"
+  "quality_tier": "balanced",
+  "use_rag": null
 }
 ```
 
@@ -185,6 +206,7 @@ Correct a piece of text.
 | `mode` | enum | `grammar` | One of `grammar`, `style`, `jira-story`, `release-note` |
 | `model` | string | (router picks) | Override the model. When unset, `quality_tier` decides. |
 | `quality_tier` | enum | `balanced` | `fast`, `balanced`, or `high`. `high` routes to a cloud provider if one is configured. |
+| `use_rag` | bool \| null | `null` | `true`/`false` forces RAG on or off for this call; `null` uses `RAG_ENABLED`. |
 
 **Successful response** (HTTP 200)
 
@@ -200,6 +222,10 @@ Correct a piece of text.
   "flagged": false,
   "flag_reason": null,
   "model_output": null,
+  "rag_context_used": [
+    {"source": "flowstate", "section": "Snapshots", "score": 0.84,
+     "preview": "The snapshot loader reads serialized editor state from disk..."}
+  ],
   "metrics": {
     "latency_ms": 1334,
     "tokens_in": 73,
@@ -208,6 +234,8 @@ Correct a piece of text.
   }
 }
 ```
+
+`rag_context_used` is empty when RAG is off, when the store is empty, or when no chunks scored above `RAG_MIN_SCORE`.
 
 **Flagged response** (HTTP 200, but the model's output was rejected by the guard)
 
@@ -220,6 +248,7 @@ Correct a piece of text.
   "flagged": true,
   "flag_reason": "model dropped masked token 'https://example.com/docs'",
   "model_output": "fixed bug where users were unable to save their profile, either through \"See\" or \"Edit\".",
+  "rag_context_used": [],
   "metrics": {
     "latency_ms": 226,
     "tokens_in": 90,
@@ -260,11 +289,11 @@ Lists the models the registry will route to, based on configuration.
 
 ### `GET /healthz`, `GET /readyz`
 
-Liveness and readiness probes for Kubernetes. Both return `{"status": "ok"}` / `{"status": "ready"}` while the service can accept requests.
+Liveness and readiness probes for Kubernetes.
 
 ### `GET /metrics/`
 
-Prometheus exposition format. Note the trailing slash. See [Operating the service](#operating-the-service).
+Prometheus exposition format. Note the trailing slash.
 
 ## Worked examples
 
@@ -281,13 +310,9 @@ curl -s -X POST http://localhost:8080/v1/correct \
 ```json
 {
   "corrected_text": "They are going home tonight.",
-  "diff": [
-    {"op": "replace", "old": "their", "new": "They are"},
-    {"op": "replace", "old": "tonigt", "new": "tonight."}
-  ],
   "model_used": "qwen2.5:7b-instruct",
   "flagged": false,
-  "metrics": {"latency_ms": 1334, "edit_ratio": 0.18, "tokens_in": 73, "tokens_out": 7}
+  "metrics": {"latency_ms": 1334, "edit_ratio": 0.18}
 }
 ```
 
@@ -303,27 +328,7 @@ curl -s -X POST http://localhost:8080/v1/correct \
 {
   "corrected_text": "As a user, I want a logout button so that I can log out from PROJ-123.",
   "model_used": "qwen2.5:7b-instruct",
-  "flagged": false,
-  "metrics": {"latency_ms": 891, "edit_ratio": 0.11}
-}
-```
-
-`PROJ-123` survives verbatim — the pre-processor masked it before the LLM saw it, the post-processor restored it after.
-
-### Release-note polish, with `@mention` and URL preservation
-
-```bash
-curl -s -X POST http://localhost:8080/v1/correct \
-  -H 'content-type: application/json' \
-  -d '{"text":"fixed bug where users couldnt save thier profile see @alice or https://example.com/docs","mode":"release-note","model":"qwen2.5:7b-instruct"}' | jq
-```
-
-```json
-{
-  "corrected_text": "fixed bug where users couldn't save their profile see @alice or https://example.com/docs",
-  "model_used": "qwen2.5:7b-instruct",
-  "flagged": false,
-  "metrics": {"latency_ms": 790, "edit_ratio": 0.02}
+  "flagged": false
 }
 ```
 
@@ -340,7 +345,7 @@ curl -s -X POST http://localhost:8080/v1/correct \
   -d '{"text":"their going home","mode":"grammar"}' | jq -r '.request_id'
 ```
 
-Both calls print the same `request_id`. The second never reaches the LLM — verified by inspecting `correct_requests_total` before and after.
+Both calls print the same `request_id`. The second never reaches the LLM.
 
 ### Rejected input (non-English)
 
@@ -357,32 +362,164 @@ HTTP/1.1 422 Unprocessable Entity
 
 ## Modes
 
-The service exposes four correction modes. Each ships with its own system prompt and edit-ratio threshold. Choose based on intent, not just content type.
-
 | Mode | When to use | Allowed edit ratio | What the prompt asks for |
 |---|---|---|---|
-| `grammar` | Fix grammar, spelling, and punctuation only. Preserve every word the user wrote. | 0.45 | Strict editor; no rewriting, no summarizing |
-| `style` | Tighten phrasing, prefer active voice, preserve meaning | 0.60 | Style editor; intent and facts preserved |
-| `jira-story` | Rewrite a shorthand ticket into "As a … I want … so that …" form | 0.80 | Jira-story editor; restructure freely |
-| `release-note` | Rewrite into a clear verb-first one-liner for customer-facing notes | 0.80 | Release-notes editor; concise restructuring |
+| `grammar` | Fix grammar, spelling, and punctuation only | 0.45 | Strict editor; no rewriting |
+| `style` | Tighten phrasing, prefer active voice | 0.60 | Style editor; intent preserved |
+| `jira-story` | Rewrite shorthand ticket into "As a … I want … so that …" | 0.80 | Jira-story editor; restructure freely |
+| `release-note` | Rewrite into a clear verb-first one-liner | 0.80 | Release-notes editor; concise |
 
-The thresholds tune how aggressive a rewrite the guard will accept. Higher modes (`jira-story`, `release-note`) tolerate substantial restructuring; `grammar` deliberately does not. In every mode, masked tokens (`@mentions`, URLs, ticket IDs, code blocks) must survive into the output or the result is flagged.
+In every mode, masked tokens (`@mentions`, URLs, ticket IDs, code blocks, glossary terms) must survive into the output or the result is flagged.
+
+## Glossary (protected terms)
+
+The glossary is a per-installation list of product names, feature names, and internal jargon that must never be rewritten by the LLM. The masker treats them the same way it treats URLs and ticket IDs — replace them with placeholder tokens before sending to the model, restore them in the output with their canonical case.
+
+### Adding terms manually
+
+```bash
+uv run python -m text_checker.glossary add Flowstate
+uv run python -m text_checker.glossary add "Snapshot Loader"
+uv run python -m text_checker.glossary list
+```
+
+### Extracting terms from your product docs (LLM-based)
+
+The extractor uses the configured LLM to suggest terms from your existing product documentation:
+
+```bash
+# preview suggested terms without modifying the glossary
+uv run python -m text_checker.glossary extract docs/flowstate.md
+uv run python -m text_checker.glossary extract ./product-docs --recursive
+
+# extract and add in one step (after reviewing)
+uv run python -m text_checker.glossary extract docs/flowstate.md --add
+```
+
+Loaders handle markdown, plain text, HTML, and PDF. Long docs are chunked automatically before being passed to the LLM. Output is deduplicated across chunks.
+
+### Importing from a file
+
+```bash
+# one term per line
+echo -e "Flowstate\nEditor\nSnapshot Loader" > my-terms.txt
+uv run python -m text_checker.glossary import my-terms.txt
+
+# or pipe from another command
+... | uv run python -m text_checker.glossary import -
+```
+
+### What the masker does
+
+When the user submits `we shipped flowstate today` and the glossary contains `Flowstate`:
+
+1. Pre-processor matches `flowstate` (case-insensitive) and replaces with `<<MASK_N>>`
+2. LLM sees `we shipped <<MASK_N>> today`, returns its correction
+3. Post-processor unmasks the placeholder back to `Flowstate` (the canonical case from the glossary)
+4. Output: `We shipped Flowstate today.`
+
+The model never sees the glossary term, so it cannot rewrite it. Case is restored from the glossary, not preserved from input, so the user gets the spelling you want even if they typed it wrong.
+
+## RAG over product docs
+
+RAG gives the model context about *what your products do*: features, modules, terminology, behavior. When the user submits `we fixed the snapshot loader`, the retriever finds the relevant doc chunks (`Snapshots: the snapshot loader reads serialized editor state...`) and injects them into the system prompt so the model preserves domain meaning during correction.
+
+The current build ships with:
+- Chroma embedded vector store (persists to `./data/rag/`)
+- Embeddings via Ollama (`nomic-embed-text` by default)
+- Markdown, plain text, HTML, and PDF loaders
+- Paragraph-aware chunker with section tracking
+- CLI for ingest, list, search, remove, reset
+
+### Setup
+
+```bash
+ollama pull nomic-embed-text
+```
+
+### Ingesting product docs
+
+```bash
+# single file
+uv run python -m text_checker.rag ingest docs/flowstate.md --source flowstate
+
+# whole directory, recursively
+uv run python -m text_checker.rag ingest ./product-docs --source flowstate --recursive
+
+# inspect what's stored
+uv run python -m text_checker.rag list
+# flowstate                   42 chunks
+# total: 42 chunks across 1 source(s)
+```
+
+`--source` is the logical re-ingest unit. Re-running ingest with the same `--source` first removes its existing chunks, then adds the fresh ones — that's how "update with latest content" works without leaving stale chunks behind.
+
+### Debugging retrieval
+
+See exactly what would be retrieved for a given input:
+
+```bash
+uv run python -m text_checker.rag search "we improved the snapshot loader" --k 3
+# 1. (0.84) flowstate § Snapshots
+#    The snapshot loader reads serialized editor state from disk...
+# 2. (0.71) flowstate § Editor
+#    The Editor module is responsible for...
+```
+
+### Per-request override
+
+```json
+POST /v1/correct
+{
+  "text": "...",
+  "mode": "grammar",
+  "use_rag": false
+}
+```
+
+`use_rag: false` skips retrieval for this request even when the store has docs. `use_rag: true` forces retrieval. `null` (default) follows `RAG_ENABLED`.
+
+### What goes into the prompt
+
+The system prompt is augmented with a labeled context block before the mode instructions:
+
+```
+You are a strict grammar editor. ...
+
+Context about products and terminology that may appear in this text:
+---
+[flowstate § Snapshots]
+The snapshot loader reads serialized editor state from disk...
+
+[flowstate § Editor]
+The Editor module handles...
+---
+Use this context to preserve product-specific terminology and meaning.
+Do not introduce information not present in the input text.
+```
+
+That last line matters: RAG context grounds **meaning**, it does not license the model to invent new content. The hallucination guard's new-entity check catches injection from doc context the same way it catches general hallucination.
+
+### Removing sources
+
+```bash
+# drop one source
+uv run python -m text_checker.rag remove flowstate
+
+# wipe everything (asks for YES to confirm)
+uv run python -m text_checker.rag reset
+```
 
 ## Operating the service
 
 ### Metrics
 
-The service exposes Prometheus metrics at `GET /metrics/`. The two key series:
+`GET /metrics/` returns Prometheus exposition format. Key series:
 
-- `correct_requests_total{mode, model, status}` — counter, where `status` is one of:
-  - `ok` — correction succeeded and was accepted
-  - `flagged` — model output rejected by the guard, original returned
-  - `rejected_lang` — input rejected as non-English
-  - `rejected_size` — input over the length limit
-  - `upstream_error` — provider returned an error
-- `correct_latency_seconds{mode, model}` — histogram of end-to-end correction latency
+- `correct_requests_total{mode, model, status}` — counter. `status` is `ok`, `flagged`, `rejected_lang`, `rejected_size`, or `upstream_error`.
+- `correct_latency_seconds{mode, model}` — histogram of end-to-end correction latency.
 
-A Prometheus scrape config snippet:
+Scrape config snippet (for the docker-compose stack):
 
 ```yaml
 scrape_configs:
@@ -392,49 +529,43 @@ scrape_configs:
     metrics_path: /metrics/
 ```
 
-A `prometheus.yml` is included for the docker-compose stack at `deploy/prometheus.yml`.
-
 ### Structured logs
 
-Every request emits one JSON log line via `structlog`:
+One JSON line per request via `structlog`:
 
 ```json
 {"event":"http_request","method":"POST","path":"/v1/correct","status_code":200,"duration_ms":1334,"level":"info","timestamp":"2026-06-17T..."}
 ```
 
-`/healthz`, `/readyz`, and `/metrics/` are deliberately excluded to keep request logs signal-only. Log level is set via `LOG_LEVEL`.
+`/healthz`, `/readyz`, and `/metrics/` are deliberately excluded.
 
 ### Health checks
 
 - `/healthz` — process is alive
-- `/readyz` — service can accept requests (provider connectivity is **not** checked here in Stage 1; a Phase 1 follow-up will add an active provider probe)
+- `/readyz` — service can accept requests (active provider probe is a Phase 1 follow-up)
 
 ## Testing
 
 | Command | What it runs |
 |---|---|
-| `make test` | The full unit + contract test suite (~75 tests, sub-second) |
+| `make test` | The full unit + contract test suite (~130 tests, ~2 sec) |
 | `make test-integration` | End-to-end tests against a real Ollama. Auto-skipped if Ollama isn't reachable. |
 | `make eval ARGS="--model qwen2.5:7b-instruct"` | Runs the golden-set scorecard against a live service on `localhost:8080` |
-
-The eval harness reads `tests/eval/data/golden.jsonl`, calls the live service per row, and prints a per-mode table of exact-match rate and average character-edit ratio vs. the expected output. Stage 1 ships with baseline scoring (exact match + edit ratio); Phase 2 will add GLEU, BERTScore, and LLM-judge scoring.
 
 ## Development workflow
 
 ```bash
-make install      # uv sync (run after pulling new deps)
-make dev          # uvicorn with --reload, port 8080
+make install      # uv sync
+make dev          # uvicorn with --reload
 make test         # pytest -q
 make lint         # ruff check
-make fmt          # ruff format (writes changes)
-make typecheck    # mypy strict mode
+make fmt          # ruff format
+make typecheck    # mypy strict
 make up           # docker compose up
 make down         # docker compose down
 make build        # docker build
 make clean        # remove caches
 ```
-
-The codebase is type-checked under `mypy --strict`. CI (when added) will run `lint`, `typecheck`, and `test`. Integration tests are opt-in via the `integration` pytest marker.
 
 ## Project layout
 
@@ -442,8 +573,10 @@ The codebase is type-checked under `mypy --strict`. CI (when added) will run `li
 text-checker/
 ├── src/text_checker/
 │   ├── api/             HTTP layer: routes, schemas, auth, rate limit, idempotency
-│   ├── pipeline/        Pre-process, prompts, orchestrator, post-process, exceptions
+│   ├── pipeline/        Pre-process, prompts, orchestrator, post-process
 │   ├── providers/       Provider abstraction, OpenAI-compat client, registry
+│   ├── glossary/        Protected-term store, CLI, LLM-based extractor
+│   ├── rag/             Vector store, loaders, chunker, retriever, ingest, CLI
 │   ├── observability/   Prometheus metrics, structured logging
 │   ├── eval/            CLI scorecard harness
 │   ├── config.py        pydantic-settings, 12-factor env config
@@ -457,7 +590,8 @@ text-checker/
 │   ├── prometheus.yml   Scrape config for the docker-compose stack
 │   └── k8s/             Reserved for Phase 1 helm chart
 ├── docs/
-│   └── architecture.md  Design rationale and roadmap
+│   ├── architecture.md  Design rationale and roadmap
+│   └── decisions/       ADRs (architecture decision records)
 ├── docker-compose.yml   service + ollama + prometheus
 ├── Dockerfile           Multi-stage (uv build → slim runtime)
 ├── Makefile             Dev targets
@@ -466,13 +600,14 @@ text-checker/
 
 ## Roadmap
 
-- **Stage 1 (current)** — Service, pipeline, provider abstraction, hardening (auth, rate limit, idempotency), Prometheus metrics, structured logs, golden-set eval harness, full test suite.
-- **Phase 1 — Production readiness.** Redis-backed rate limit and idempotency (multi-replica), Postgres request log, OpenTelemetry traces, helm chart in `deploy/k8s/`, active provider probe on `/readyz`.
-- **Phase 2 — Quality flywheel.** Real eval metrics (GLEU, BERTScore, LLM-judge), per-model Grafana scorecard, `/v1/feedback` endpoint, A/B routing, shadow traffic.
-- **Phase 3 — Critic-reviser.** Opt-in `quality_tier=high` adds a writer → critic → reviser loop with a hard one-revision cap. Sentence-aware chunker for long inputs.
-- **Phase 4 — Memory.** Glossary, style rules, RAG over approved corrections, per-tenant LoRA candidates gated by the eval harness.
+- **Stage 1** — Service, pipeline, provider abstraction, hardening, Prometheus, structured logs, eval harness.
+- **Stage 2 (current)** — Glossary store + LLM-based extractor + masker integration. RAG over product docs with multi-format loaders, Chroma store, Ollama embeddings, retrieval, orchestrator integration.
+- **Phase 1 — Production readiness.** Redis-backed rate-limit + idempotency (multi-replica), Postgres request log, OpenTelemetry traces, helm chart, active provider probe on `/readyz`. Swap Chroma to pgvector when Postgres lands.
+- **Phase 2 — Quality flywheel + multi-tenancy.** Real eval metrics (GLEU, BERTScore, LLM-judge), per-model Grafana scorecard, `/v1/feedback`, A/B routing, per-tenant glossary and RAG isolation.
+- **Phase 3 — Critic-reviser + chunker.** Opt-in `quality_tier=high` writer → critic → reviser loop with a one-revision cap. Sentence-aware chunker for long inputs.
+- **Phase 4 — Example RAG + fine-tune.** Few-shot RAG over approved (before, after) corrections. Per-tenant LoRA candidates gated by the eval harness.
 
-Full design rationale and trade-offs in [docs/architecture.md](docs/architecture.md).
+Full design rationale in [docs/architecture.md](docs/architecture.md). Individual decisions in [docs/decisions/](docs/decisions/).
 
 ## Troubleshooting
 
@@ -489,7 +624,16 @@ The model is too small to follow instructions reliably. Pull a larger model: `ol
 Expected at 7B on CPU. For interactive UIs prefer `qwen2.5:0.5b` via `quality_tier=fast`, or configure a cloud provider via `ANTHROPIC_API_KEY` and pass `quality_tier=high`.
 
 **`/metrics` returns a 307 redirect.**
-The Prometheus mount lives at `/metrics/` with a trailing slash. Prometheus scrapers follow the redirect automatically; `curl` and ad-hoc requests need the trailing slash.
+The Prometheus mount lives at `/metrics/` with a trailing slash. Prometheus scrapers follow the redirect automatically; ad-hoc `curl` needs the trailing slash.
+
+**RAG retrieval is empty / `rag_context_used: []` always.**
+Either the store is empty (check `uv run python -m text_checker.rag list`) or the embedding model isn't pulled (`ollama pull nomic-embed-text`).
+
+**`rag ingest` fails with embedding errors.**
+The embedding endpoint defaults to `OLLAMA_BASE_URL`. If your embedding service lives elsewhere, set `RAG_EMBEDDING_BASE_URL`. Verify the model name with `ollama list` and confirm it matches `RAG_EMBEDDING_MODEL`.
+
+**Glossary terms aren't being protected.**
+List your terms (`glossary list`). Terms match case-insensitively but with word boundaries — `IO` won't match inside `ratio` for example. Multi-word terms work (`API Reference`) but each word counts toward the match.
 
 **Auth is unexpectedly disabled.**
 `API_KEYS` is empty. Set `API_KEYS=key1,key2` in `.env` and restart.
