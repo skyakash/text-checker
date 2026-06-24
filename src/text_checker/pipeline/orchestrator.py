@@ -1,22 +1,56 @@
 import time
 from uuid import uuid4
 
-from ..api.schemas import CorrectMetrics, CorrectRequest, CorrectResponse
+from ..api.schemas import (
+    CorrectMetrics,
+    CorrectRequest,
+    CorrectResponse,
+    RagContext,
+)
+from ..config import settings
 from ..glossary.store import get_store as get_glossary_store
 from ..providers.base import GenerationRequest
 from ..providers.registry import ProviderRegistry
+from ..rag.embeddings import EmbeddingsClient
+from ..rag.retriever import retrieve as rag_retrieve
+from ..rag.store import StoredChunk, get_store as get_rag_store
 from . import postprocess, preprocess, prompts
 
 
 async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectResponse:
     glossary_terms = set(get_glossary_store().terms())
     masked = preprocess.preprocess(req.text, glossary_terms=glossary_terms)
+
+    rag_results: list[StoredChunk] = []
+    use_rag = settings.rag_enabled if req.use_rag is None else req.use_rag
+    if use_rag:
+        store = get_rag_store()
+        if store.count() > 0:
+            embedder = EmbeddingsClient(
+                base_url=settings.rag_embedding_base_url or settings.ollama_base_url,
+                model=settings.rag_embedding_model,
+            )
+            rag_results = await rag_retrieve(
+                req.text,
+                k=settings.rag_top_k,
+                store=store,
+                embedder=embedder,
+                min_score=settings.rag_min_score,
+            )
+
+    sys_prompt_base = prompts.system_prompt(req.mode)
+    if rag_results:
+        context_tuples = [(c.source, c.section, c.text) for c in rag_results]
+        sys_prompt = prompts.with_context(sys_prompt_base, context_tuples)
+    else:
+        sys_prompt = sys_prompt_base
+
     route = registry.route(req.quality_tier, req.model)
     provider = registry.get(route.provider_name)
 
     gen_req = GenerationRequest(
         model=route.model,
-        system_prompt=prompts.system_prompt(req.mode),
+        system_prompt=sys_prompt,
         user_prompt=prompts.user_prompt(masked.text),
     )
 
@@ -43,6 +77,16 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
         flag_reason = reason
         model_output = candidate
 
+    rag_context_used = [
+        RagContext(
+            source=r.source,
+            section=r.section,
+            score=r.score,
+            preview=r.text.strip()[:120],
+        )
+        for r in rag_results
+    ]
+
     return CorrectResponse(
         request_id=str(uuid4()),
         corrected_text=corrected,
@@ -51,6 +95,7 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
         flagged=flagged,
         flag_reason=flag_reason,
         model_output=model_output,
+        rag_context_used=rag_context_used,
         metrics=CorrectMetrics(
             latency_ms=latency_ms,
             tokens_in=gen_resp.tokens_in,

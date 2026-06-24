@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from ..api.schemas import Mode
 
 PROMPT_VERSION = "v1"
@@ -34,3 +36,22 @@ def system_prompt(mode: Mode) -> str:
 
 def user_prompt(text: str) -> str:
     return text
+
+
+def with_context(system: str, contexts: list[tuple[str, str | None, str]]) -> str:
+    if not contexts:
+        return system
+    blocks: list[str] = []
+    for source, section, text in contexts:
+        header = f"[{source} § {section}]" if section else f"[{source}]"
+        blocks.append(f"{header}\n{text}")
+    context_block = "\n\n".join(blocks)
+    return (
+        system
+        + "\n\nContext about products and terminology that may appear in this text:\n"
+        + "---\n"
+        + context_block
+        + "\n---\n"
+        + "Use this context to preserve product-specific terminology and meaning. "
+        + "Do not introduce information not present in the input text."
+    )

@@ -22,6 +22,16 @@ class Settings(BaseSettings):
     redis_url: str | None = None
     otel_exporter_otlp_endpoint: str | None = None
 
+    glossary_path: str = "./data/glossary.json"
+
+    rag_enabled: bool = True
+    rag_store_path: str = "./data/rag"
+    rag_collection_name: str = "products"
+    rag_embedding_model: str = "nomic-embed-text"
+    rag_embedding_base_url: str | None = None
+    rag_top_k: int = 3
+    rag_min_score: float = 0.0
+
     @property
     def api_keys_set(self) -> set[str]:
         return {k.strip() for k in self.api_keys.split(",") if k.strip()}

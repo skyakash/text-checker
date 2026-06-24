@@ -21,6 +21,7 @@ class CorrectRequest(BaseModel):
     mode: Mode = Mode.GRAMMAR
     model: str | None = None
     quality_tier: QualityTier = QualityTier.BALANCED
+    use_rag: bool | None = None
     idempotency_key: str | None = None
 
 
@@ -31,6 +32,13 @@ class CorrectMetrics(BaseModel):
     edit_ratio: float
 
 
+class RagContext(BaseModel):
+    source: str
+    section: str | None = None
+    score: float
+    preview: str
+
+
 class CorrectResponse(BaseModel):
     request_id: str
     corrected_text: str
@@ -39,4 +47,5 @@ class CorrectResponse(BaseModel):
     flagged: bool = False
     flag_reason: str | None = None
     model_output: str | None = None
+    rag_context_used: list[RagContext] = Field(default_factory=list)
     metrics: CorrectMetrics
