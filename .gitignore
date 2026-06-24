@@ -35,7 +35,7 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Local data
+# Local data (RAG store, glossary, etc.)
 *.sqlite3
 data/
 logs/

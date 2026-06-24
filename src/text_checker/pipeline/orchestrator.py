@@ -2,13 +2,15 @@ import time
 from uuid import uuid4
 
 from ..api.schemas import CorrectMetrics, CorrectRequest, CorrectResponse
+from ..glossary.store import get_store as get_glossary_store
 from ..providers.base import GenerationRequest
 from ..providers.registry import ProviderRegistry
 from . import postprocess, preprocess, prompts
 
 
 async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectResponse:
-    masked = preprocess.preprocess(req.text)
+    glossary_terms = set(get_glossary_store().terms())
+    masked = preprocess.preprocess(req.text, glossary_terms=glossary_terms)
     route = registry.route(req.quality_tier, req.model)
     provider = registry.get(route.provider_name)
 

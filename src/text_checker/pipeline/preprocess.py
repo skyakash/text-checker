@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import re
 from dataclasses import dataclass, field
 
@@ -28,18 +30,33 @@ def is_likely_english(text: str) -> bool:
     return ascii_letters / len(letters) >= 0.9
 
 
-def mask(text: str) -> MaskedInput:
+def mask(text: str, glossary_terms: set[str] | None = None) -> MaskedInput:
     masks: dict[str, str] = {}
     counter = 0
+
     for _name, pattern in _PATTERNS:
-        def _replace(m: re.Match[str]) -> str:
+        def _replace_pattern(m: re.Match[str]) -> str:
             nonlocal counter
             placeholder = f"<<MASK_{counter}>>"
             masks[placeholder] = m.group(0)
             counter += 1
             return placeholder
 
-        text = pattern.sub(_replace, text)
+        text = pattern.sub(_replace_pattern, text)
+
+    if glossary_terms:
+        for term in sorted(glossary_terms, key=len, reverse=True):
+            term_pattern = re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE)
+
+            def _replace_term(m: re.Match[str], canonical: str = term) -> str:
+                nonlocal counter
+                placeholder = f"<<MASK_{counter}>>"
+                masks[placeholder] = canonical
+                counter += 1
+                return placeholder
+
+            text = term_pattern.sub(_replace_term, text)
+
     return MaskedInput(text=text, masks=masks)
 
 
@@ -49,9 +66,13 @@ def unmask(text: str, masks: dict[str, str]) -> str:
     return text
 
 
-def preprocess(text: str, max_chars: int = MAX_INPUT_CHARS) -> MaskedInput:
+def preprocess(
+    text: str,
+    max_chars: int = MAX_INPUT_CHARS,
+    glossary_terms: set[str] | None = None,
+) -> MaskedInput:
     if len(text) > max_chars:
         raise InputTooLongError(len(text), max_chars)
     if not is_likely_english(text):
         raise NonEnglishInputError("input does not appear to be English")
-    return mask(text)
+    return mask(text, glossary_terms=glossary_terms)
