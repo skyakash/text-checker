@@ -721,60 +721,219 @@ Prometheus exposition format. Note the trailing slash.
 
 ## Worked examples
 
-These are real responses captured from the running service. Latency is on an M-series Mac CPU, no GPU.
+Real responses from `qwen2.5:7b-instruct` running on an M-series Mac Mini (no GPU). Your latency will vary by hardware.
 
-### Grammar correction
+### Grammar — typos and canonical case via glossary
 
 ```bash
 curl -s -X POST http://localhost:8080/v1/correct \
   -H 'content-type: application/json' \
-  -d '{"text":"their going home tonigt","mode":"grammar","model":"qwen2.5:7b-instruct"}' | jq
+  -d '{
+    "text": "flowstate is going to be reased next quartar",
+    "mode": "grammar",
+    "model": "qwen2.5:7b-instruct"
+  }' | jq
 ```
 
 ```json
 {
-  "corrected_text": "They are going home tonight.",
+  "request_id": "bc65f56c-e3ad-4b60-aa14-f2eff460353a",
+  "corrected_text": "Flowstate is going to be released next quarter.",
+  "diff": [
+    {"op": "replace", "old": "flowstate",  "new": "Flowstate"},
+    {"op": "replace", "old": "reased",     "new": "released"},
+    {"op": "replace", "old": "quartar",    "new": "quarter."}
+  ],
   "model_used": "qwen2.5:7b-instruct",
   "flagged": false,
-  "metrics": {"latency_ms": 1334, "edit_ratio": 0.18}
+  "flag_reason": null,
+  "model_output": null,
+  "rag_context_used": [],
+  "metrics": {
+    "latency_ms": 602,
+    "tokens_in": 82,
+    "tokens_out": 13,
+    "edit_ratio": 0.067
+  }
 }
 ```
 
-### Jira story rewrite, with ticket-ID preservation
+`flowstate` → `Flowstate` (glossary canonical case). `reased`/`quartar` fixed. `rag_context_used: []` because `grammar` mode skips RAG by default.
 
-```bash
-curl -s -X POST http://localhost:8080/v1/correct \
-  -H 'content-type: application/json' \
-  -d '{"text":"as a user i want logout button so i can log out from PROJ-123","mode":"jira-story","model":"qwen2.5:7b-instruct"}' | jq
-```
+---
 
-```json
-{
-  "corrected_text": "As a user, I want a logout button so that I can log out from PROJ-123.",
-  "model_used": "qwen2.5:7b-instruct",
-  "flagged": false
-}
-```
-
-### Idempotent retry
+### Grammar — short text, idempotent retry
 
 ```bash
 KEY=$(uuidgen)
-curl -s -X POST http://localhost:8080/v1/correct \
-  -H "Content-Type: application/json" -H "Idempotency-Key: $KEY" \
-  -d '{"text":"their going home","mode":"grammar"}' | jq -r '.request_id'
 
-curl -s -X POST http://localhost:8080/v1/correct \
-  -H "Content-Type: application/json" -H "Idempotency-Key: $KEY" \
-  -d '{"text":"their going home","mode":"grammar"}' | jq -r '.request_id'
+# First call — hits the LLM
+curl -s -X POST localhost:8080/v1/correct \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $KEY" \
+  -d '{"text":"their going home","mode":"grammar","model":"qwen2.5:7b-instruct"}' \
+  | jq -r '.request_id'
+
+# Second call — returned from cache, LLM never called
+curl -s -X POST localhost:8080/v1/correct \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $KEY" \
+  -d '{"text":"their going home","mode":"grammar","model":"qwen2.5:7b-instruct"}' \
+  | jq -r '.request_id'
 ```
 
-Both calls print the same `request_id`. The second never reaches the LLM.
+```
+faa69fde-7c5f-48a3-8ec0-f4fcf57b605e
+faa69fde-7c5f-48a3-8ec0-f4fcf57b605e
+```
 
-### Rejected input (non-English)
+Same `request_id` both times. Full response from the first call:
+
+```json
+{
+  "request_id": "faa69fde-7c5f-48a3-8ec0-f4fcf57b605e",
+  "corrected_text": "They are going home.",
+  "diff": [
+    {"op": "replace", "old": "their", "new": "They are"},
+    {"op": "replace", "old": "home",  "new": "home."}
+  ],
+  "model_used": "qwen2.5:7b-instruct",
+  "flagged": false,
+  "flag_reason": null,
+  "model_output": null,
+  "rag_context_used": [],
+  "metrics": {
+    "latency_ms": 1279,
+    "tokens_in": 71,
+    "tokens_out": 6,
+    "edit_ratio": 0.222
+  }
+}
+```
+
+---
+
+### Release-note with RAG context
 
 ```bash
-curl -s -i -X POST http://localhost:8080/v1/correct \
+curl -s -X POST localhost:8080/v1/correct \
+  -H 'content-type: application/json' \
+  -d '{
+    "text": "we improved the hallucination guard in text-checker",
+    "mode": "release-note",
+    "model": "qwen2.5:7b-instruct"
+  }' | jq
+```
+
+```json
+{
+  "request_id": "6a5c7355-7c34-413f-a8b9-a3693fbe4fd2",
+  "corrected_text": "we improved the Hallucination Guard in the text-checker service",
+  "diff": [
+    {"op": "replace", "old": "hallucination guard", "new": "Hallucination Guard"},
+    {"op": "insert",  "old": "",                    "new": "the"},
+    {"op": "insert",  "old": "",                    "new": "service"}
+  ],
+  "model_used": "qwen2.5:7b-instruct",
+  "flagged": false,
+  "flag_reason": null,
+  "model_output": null,
+  "rag_context_used": [
+    {
+      "source": "text-checker-docs",
+      "section": "Consequences",
+      "score": 0.63,
+      "preview": "# 0005. Hallucination guard returns the original text, not an error\n\nDate: 2026-06-17..."
+    },
+    {
+      "source": "text-checker-docs",
+      "section": "Consequences",
+      "score": 0.627,
+      "preview": "The hallucination guard verifies every masked token's original value appears in the..."
+    },
+    {
+      "source": "text-checker-docs",
+      "section": "Consequences",
+      "score": 0.603,
+      "preview": "# 0006. Per-mode edit-ratio thresholds, tuned after live testing..."
+    }
+  ],
+  "metrics": {
+    "latency_ms": 3372,
+    "tokens_in": 960,
+    "tokens_out": 15,
+    "edit_ratio": 0.14
+  }
+}
+```
+
+`rag_context_used` shows the three chunks injected as context (all scored above the 0.50 floor). `tokens_in: 960` vs `82` in the grammar example — the RAG context adds ~880 prompt tokens.
+
+---
+
+### Flagged response — guard catches dropped glossary token
+
+```bash
+curl -s -X POST localhost:8080/v1/correct \
+  -H 'content-type: application/json' \
+  -d '{
+    "text": "flowstate is great",
+    "mode": "style",
+    "model": "qwen2.5:7b-instruct"
+  }' | jq
+```
+
+```json
+{
+  "request_id": "73f6b88d-d2d5-4ae5-b8ea-86dce8942385",
+  "corrected_text": "flowstate is great",
+  "diff": [],
+  "model_used": "qwen2.5:7b-instruct",
+  "flagged": true,
+  "flag_reason": "model dropped masked token 'Flowstate'",
+  "model_output": "It is great.",
+  "rag_context_used": [],
+  "metrics": {
+    "latency_ms": 414,
+    "tokens_in": 71,
+    "tokens_out": 5,
+    "edit_ratio": 0.0
+  }
+}
+```
+
+The model rewrote `<<MASK_0>>` (the masked `Flowstate`) as a pronoun `It`. The guard detected the missing glossary token, rejected the output, and returned the original text safely. `model_output` shows what the model actually said so you can decide whether to retry with a bigger model or pass `use_rag: false`.
+
+---
+
+### Readiness probe
+
+```bash
+curl -s localhost:8080/readyz | jq
+```
+
+```json
+{
+  "status": "ready",
+  "components": {
+    "provider:ollama": "ok",
+    "redis": "ok"
+  }
+}
+```
+
+```bash
+# When Ollama is down:
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8080/readyz
+# 503
+```
+
+---
+
+### Non-English input rejected
+
+```bash
+curl -s -i -X POST localhost:8080/v1/correct \
   -H 'content-type: application/json' \
   -d '{"text":"これは日本語の文章です。","mode":"grammar"}'
 ```
