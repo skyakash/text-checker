@@ -49,7 +49,16 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
 
     sys_prompt_base = prompts.system_prompt(req.mode)
     if rag_results:
-        context_tuples = [(c.source, c.section, c.text) for c in rag_results]
+        context_tuples = [
+            (
+                c.source,
+                c.section,
+                preprocess.reapply_glossary_masks(
+                    c.text, masked.masks, masked.glossary_placeholders
+                ),
+            )
+            for c in rag_results
+        ]
         sys_prompt = prompts.with_context(sys_prompt_base, context_tuples)
     else:
         sys_prompt = sys_prompt_base
@@ -69,6 +78,9 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
 
     raw = gen_resp.text.strip()
     candidate = preprocess.unmask(raw, masked.masks)
+    candidate = postprocess.canonicalize_glossary_terms(
+        candidate, masked.masks, masked.glossary_placeholders
+    )
 
     passed, reason = postprocess.hallucination_guard(
         req.text, candidate, req.mode, masked.masks

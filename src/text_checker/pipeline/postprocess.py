@@ -1,4 +1,5 @@
 import difflib
+import re
 from typing import TypedDict
 
 from ..api.schemas import Mode
@@ -40,6 +41,27 @@ def structured_diff(original: str, corrected: str) -> list[DiffChunk]:
             )
         )
     return chunks
+
+
+def canonicalize_glossary_terms(
+    text: str,
+    masks: dict[str, str],
+    glossary_placeholders: set[str],
+) -> str:
+    """Normalize the case of any glossary-term occurrences in text to the canonical
+    case stored in the masks dict.
+
+    The model may write the term in any case under context pressure; this lets the
+    guard's mask-survival check pass and gives the caller back the spelling the
+    glossary specified.
+    """
+    if not glossary_placeholders:
+        return text
+    items = [(p, masks[p]) for p in glossary_placeholders if p in masks]
+    for _placeholder, canonical in sorted(items, key=lambda kv: -len(kv[1])):
+        pattern = re.compile(r"\b" + re.escape(canonical) + r"\b", re.IGNORECASE)
+        text = pattern.sub(canonical, text)
+    return text
 
 
 def hallucination_guard(

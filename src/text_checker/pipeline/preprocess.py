@@ -20,6 +20,7 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
 class MaskedInput:
     text: str
     masks: dict[str, str] = field(default_factory=dict)
+    glossary_placeholders: set[str] = field(default_factory=set)
 
 
 def is_likely_english(text: str) -> bool:
@@ -32,6 +33,7 @@ def is_likely_english(text: str) -> bool:
 
 def mask(text: str, glossary_terms: set[str] | None = None) -> MaskedInput:
     masks: dict[str, str] = {}
+    glossary_placeholders: set[str] = set()
     counter = 0
 
     for _name, pattern in _PATTERNS:
@@ -52,17 +54,37 @@ def mask(text: str, glossary_terms: set[str] | None = None) -> MaskedInput:
                 nonlocal counter
                 placeholder = f"<<MASK_{counter}>>"
                 masks[placeholder] = canonical
+                glossary_placeholders.add(placeholder)
                 counter += 1
                 return placeholder
 
             text = term_pattern.sub(_replace_term, text)
 
-    return MaskedInput(text=text, masks=masks)
+    return MaskedInput(text=text, masks=masks, glossary_placeholders=glossary_placeholders)
 
 
 def unmask(text: str, masks: dict[str, str]) -> str:
     for placeholder, original in masks.items():
         text = text.replace(placeholder, original)
+    return text
+
+
+def reapply_glossary_masks(
+    text: str,
+    masks: dict[str, str],
+    glossary_placeholders: set[str],
+) -> str:
+    """Replace glossary-term occurrences in text with their existing placeholders.
+
+    Used to mask glossary terms inside RAG context chunks so the LLM never sees
+    the term it might otherwise substitute for the input's placeholder.
+    """
+    if not glossary_placeholders:
+        return text
+    items = [(p, masks[p]) for p in glossary_placeholders if p in masks]
+    for placeholder, canonical in sorted(items, key=lambda kv: -len(kv[1])):
+        pattern = re.compile(r"\b" + re.escape(canonical) + r"\b", re.IGNORECASE)
+        text = pattern.sub(placeholder, text)
     return text
 
 
