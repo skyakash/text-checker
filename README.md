@@ -846,6 +846,8 @@ The model never sees the glossary term, so it cannot rewrite it. Case is restore
 
 ## RAG over product docs
 
+**Ingesting** (also called indexing) is how you load your product docs into the RAG vector store. The model weights are not changed — documents are pre-embedded and stored so relevant chunks can be retrieved at query time and injected into the correction prompt as context.
+
 RAG gives the model context about *what your products do*: features, modules, terminology, behavior. When the user submits `we fixed the snapshot loader`, the retriever finds the relevant doc chunks (`Snapshots: the snapshot loader reads serialized editor state...`) and injects them into the system prompt so the model preserves domain meaning during correction.
 
 The current build ships with:
@@ -863,32 +865,162 @@ ollama pull nomic-embed-text
 
 ### Ingesting product docs
 
+**Ingest a single file:**
+
 ```bash
-# single file
 uv run python -m text_checker.rag ingest docs/flowstate.md --source flowstate
-
-# whole directory, recursively
-uv run python -m text_checker.rag ingest ./product-docs --source flowstate --recursive
-
-# inspect what's stored
-uv run python -m text_checker.rag list
-# flowstate                   42 chunks
-# total: 42 chunks across 1 source(s)
 ```
 
-`--source` is the logical re-ingest unit. Re-running ingest with the same `--source` first removes its existing chunks, then adds the fresh ones — that's how "update with latest content" works without leaving stale chunks behind.
+```
+ingested source=flowstate files=1 chunks=8
+```
+
+**Ingest a whole directory recursively:**
+
+```bash
+uv run python -m text_checker.rag ingest ./product-docs --source myproduct --recursive
+```
+
+```
+ingested source=myproduct files=12 chunks=94
+```
+
+**Inspect what's stored:**
+
+```bash
+uv run python -m text_checker.rag list
+```
+
+```
+flowstate                        8 chunks
+text-checker-docs               47 chunks
+
+total: 55 chunks across 2 source(s)
+```
+
+`--source` is the logical re-ingest unit. Re-running ingest with the same `--source` first removes its existing chunks, then adds the fresh ones — that's how "update with latest content" works without leaving stale chunks behind:
+
+```bash
+# Update flowstate docs after editing them
+uv run python -m text_checker.rag ingest docs/flowstate.md --source flowstate
+# ingested source=flowstate files=1 chunks=9
+```
 
 ### Debugging retrieval
 
-See exactly what would be retrieved for a given input:
+See exactly what would be retrieved for a given input before making a real correction request:
 
 ```bash
-uv run python -m text_checker.rag search "we improved the snapshot loader" --k 3
-# 1. (0.84) flowstate § Snapshots
-#    The snapshot loader reads serialized editor state from disk...
-# 2. (0.71) flowstate § Editor
-#    The Editor module is responsible for...
+uv run python -m text_checker.rag search "hallucination guard" --k 5
 ```
+
+```
+1. (0.60) text-checker-docs § Consequences
+   ons`, ticket IDs (`[A-Z]{2,}-\d+`). The hallucination guard verifies every masked token's original value appears in the ...
+2. (0.57) text-checker-docs § Consequences
+   # 0005. Hallucination guard returns the original text, not an error  Date: 2026-06-17 Status: Accepted  ## Context  The ...
+3. (0.53) text-checker-docs § Consequences
+   # 0004. Mask protected tokens before the LLM sees them  Date: 2026-06-17 Status: Accepted  ## Context  User input freque...
+4. (0.50) text-checker-docs § Safe-fallback semantics
+   en calls `provider.generate(GenerationRequest)`. All providers in the current build are instances of `OpenAICompatProvid...
+5. (0.45) text-checker-docs § Consequences
+   # 0006. Per-mode edit-ratio thresholds, tuned after live testing  Date: 2026-06-17 Status: Accepted  ## Context  The ha...
+```
+
+Use the scores to decide whether to adjust `RAG_MIN_SCORE`. The default floor is 0.50 — chunks 1–4 above would be injected; chunk 5 would be dropped.
+
+### End-to-end correction with RAG context
+
+**Request:**
+
+```bash
+curl -s -X POST localhost:8080/v1/correct \
+  -H 'content-type: application/json' \
+  -d '{
+    "text": "we improved the hallucination guard in text-checker",
+    "mode": "release-note",
+    "model": "qwen2.5:7b-instruct"
+  }' | jq
+```
+
+**Response (RAG active — store has docs):**
+
+```json
+{
+  "request_id": "a8a3e6ea-3c27-4a96-90b4-742020f58c3d",
+  "corrected_text": "Improved the Hallucination Guard in text-checker.",
+  "diff": [
+    { "op": "delete", "old": "we", "new": "" },
+    { "op": "replace", "old": "hallucination guard", "new": "Hallucination Guard" }
+  ],
+  "model_used": "qwen2.5:7b-instruct",
+  "flagged": false,
+  "flag_reason": null,
+  "model_output": null,
+  "rag_context_used": [
+    {
+      "source": "text-checker-docs",
+      "section": "Consequences",
+      "score": 0.63,
+      "preview": "# 0005. Hallucination guard returns the original text, not an error..."
+    },
+    {
+      "source": "text-checker-docs",
+      "section": "Consequences",
+      "score": 0.62,
+      "preview": "The hallucination guard verifies every masked token's original value..."
+    }
+  ],
+  "metrics": {
+    "latency_ms": 3372,
+    "tokens_in": 960,
+    "tokens_out": 15,
+    "edit_ratio": 0.07
+  }
+}
+```
+
+`rag_context_used` shows which chunks were injected and their scores. The glossary term `Hallucination Guard` was restored to canonical case.
+
+**Same request with RAG forced off:**
+
+```bash
+curl -s -X POST localhost:8080/v1/correct \
+  -H 'content-type: application/json' \
+  -d '{
+    "text": "we improved the hallucination guard in text-checker",
+    "mode": "release-note",
+    "model": "qwen2.5:7b-instruct",
+    "use_rag": false
+  }' | jq '.corrected_text, .rag_context_used, .metrics.latency_ms'
+```
+
+```
+"improved the Hallucination Guard in text-checker"
+[]
+630
+```
+
+Same quality, half the latency — no embedding call, no context tokens. Use `use_rag: false` when you want raw speed or the request doesn't benefit from product context.
+
+**Grammar fix (RAG skipped automatically):**
+
+```bash
+curl -s -X POST localhost:8080/v1/correct \
+  -H 'content-type: application/json' \
+  -d '{
+    "text": "flowstate is going to be reased next quartar",
+    "mode": "grammar",
+    "model": "qwen2.5:7b-instruct"
+  }' | jq '.corrected_text, .rag_context_used'
+```
+
+```
+"Flowstate is going to be released next quarter."
+[]
+```
+
+`grammar` mode skips RAG by default (`RAG_SKIP_MODES=grammar`) — product context doesn't help spell `released` correctly and can mislead the model. Override with `"use_rag": true` if you specifically want context for a grammar call.
 
 ### Per-request override
 
@@ -897,11 +1029,11 @@ POST /v1/correct
 {
   "text": "...",
   "mode": "grammar",
-  "use_rag": false
+  "use_rag": true
 }
 ```
 
-`use_rag: false` skips retrieval for this request even when the store has docs. `use_rag: true` forces retrieval. `null` (default) follows `RAG_ENABLED`.
+`use_rag: false` skips retrieval for this request even when the store has docs. `use_rag: true` forces retrieval even for modes in `RAG_SKIP_MODES`. `null` (default) follows `RAG_ENABLED` and `RAG_SKIP_MODES`.
 
 ### What goes into the prompt
 
