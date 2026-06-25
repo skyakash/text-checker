@@ -619,9 +619,28 @@ Lists the models the registry will route to, based on configuration.
 ["qwen2.5:7b-instruct", "qwen2.5:0.5b"]
 ```
 
-### `GET /healthz`, `GET /readyz`
+### `GET /healthz`
 
-Liveness and readiness probes for Kubernetes.
+Liveness — returns 200 with `{"status":"ok"}` while the process is alive. No upstream checks.
+
+### `GET /readyz`
+
+Readiness — actively probes upstream dependencies and returns 200 only if all are reachable. Result is cached for ~5 s so probe storms don't hammer Ollama.
+
+```json
+// 200 when ready
+{"status": "ready", "components": {"provider:ollama": "ok", "redis": "ok"}}
+
+// 503 when any upstream is down
+{"status": "not ready",
+ "components": {"provider:ollama": "error: ConnectError", "redis": "ok"}}
+```
+
+Probes:
+- `provider:ollama` — `GET {OLLAMA_BASE_URL}/models` with a 5 s timeout
+- `redis` — `PING` with a 2 s timeout (only when `REDIS_URL` is configured)
+
+Use `/healthz` for liveness gating (k8s restartPolicy), `/readyz` for traffic gating (k8s readiness probes, load balancer health checks, `docker compose --wait`).
 
 ### `GET /metrics/`
 
@@ -892,8 +911,8 @@ One JSON line per request via `structlog`:
 
 ### Health checks
 
-- `/healthz` — process is alive
-- `/readyz` — service can accept requests (active provider probe is a Phase 1 follow-up)
+- `/healthz` — process is alive; never gates on upstreams
+- `/readyz` — actively probes Ollama and Redis (if configured); 200 when ready, 503 otherwise. 5 s response cache. See [API reference](#get-readyz) for the response shape.
 
 ## Testing
 

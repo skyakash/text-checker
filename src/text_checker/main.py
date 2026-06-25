@@ -1,8 +1,9 @@
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
+from . import readiness
 from .api.routes import router
 from .config import settings
 from .observability.logging import configure_logging, get_logger
@@ -40,5 +41,12 @@ async def healthz() -> dict[str, str]:
 
 
 @app.get("/readyz")
-async def readyz() -> dict[str, str]:
-    return {"status": "ready"}
+async def readyz() -> JSONResponse:
+    report = await readiness.check()
+    return JSONResponse(
+        content={
+            "status": "ready" if report.ready else "not ready",
+            "components": report.components,
+        },
+        status_code=200 if report.ready else 503,
+    )
