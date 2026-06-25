@@ -1,0 +1,55 @@
+# Production overlay for single-replica deployment.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#
+# Requires a .env.prod file in this directory (copy from .env.example).
+# The service image must already be built:
+#   docker build -t text-checker:latest .
+
+services:
+  service:
+    image: text-checker:latest
+    build: !reset null
+    restart: unless-stopped
+    env_file: .env.prod
+    ports: []
+    expose: ["8080"]
+    volumes:
+      - ./data:/app/data:Z
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  ollama:
+    restart: unless-stopped
+    volumes:
+      - ollama-data:/root/.ollama
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  redis:
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--save", "3600", "1", "--appendonly", "no"]
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "2"
+
+  prometheus:
+    restart: unless-stopped
+    volumes:
+      - prometheus-data:/prometheus
+      - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+volumes:
+  ollama-data:
+  redis-data:
+  prometheus-data:

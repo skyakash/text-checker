@@ -1,0 +1,42 @@
+# systemd unit for bare-metal deployment (RHEL / Ubuntu without Docker).
+#
+# Install:
+#   sudo cp deploy/text-checker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now text-checker
+#
+# Assumes:
+#   - Service files cloned to /opt/text-checker
+#   - uv installed at /usr/local/bin/uv (or adjust ExecStart)
+#   - Ollama running as a separate systemd service
+#   - Redis running as a separate systemd service
+#   - .env.prod file at /opt/text-checker/.env.prod
+
+[Unit]
+Description=text-checker correction service
+After=network.target ollama.service redis.service
+Requires=ollama.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/text-checker
+EnvironmentFile=/opt/text-checker/.env.prod
+ExecStart=/usr/local/bin/uv run uvicorn text_checker.main:app \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --workers 1 \
+    --log-level warning
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+User=text-checker
+Group=text-checker
+NoNewPrivileges=yes
+PrivateTmp=yes
+
+# Allow writing to the data directory
+ReadWritePaths=/opt/text-checker/data
+
+[Install]
+WantedBy=multi-user.target

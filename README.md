@@ -12,6 +12,7 @@ An internal HTTP service that grammar-, style-, and clarity-corrects English tex
 - [Prerequisites](#prerequisites)
 - [Setup and first run](#setup-and-first-run)
 - [Quick start: full stack walkthrough](#quick-start-full-stack-walkthrough)
+- [Running in production (single replica)](#running-in-production-single-replica)
 - [Running on Linux / RHEL](#running-on-linux--rhel)
 - [Running behind a corporate proxy](#running-behind-a-corporate-proxy)
 - [Configuration](#configuration)
@@ -317,6 +318,78 @@ uv run python -m text_checker.glossary add "Workspace"
 ```
 
 Both stores persist under `./data/` (gitignored). Back up the directory to back up your knowledge base.
+
+## Running in production (single replica)
+
+Two paths: Docker Compose (recommended) or bare-metal systemd (for RHEL without Docker). See [ADR-0014](docs/decisions/0014-single-replica-production-deployment.md) for the design rationale.
+
+### Docker Compose path
+
+```bash
+# 1. Copy and fill in secrets
+cp .env.prod.example .env.prod
+$EDITOR .env.prod   # set API_KEYS, model name, proxy if needed
+
+# 2. Build the image once
+docker build -t text-checker:latest .
+
+# 3. Pull Ollama models inside the container
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d ollama
+docker compose exec ollama ollama pull qwen2.5:7b-instruct
+docker compose exec ollama ollama pull nomic-embed-text
+
+# 4. Start everything
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# 5. Verify
+curl -s http://localhost:8080/readyz | jq
+# expect: {"status":"ready","components":{"provider:ollama":"ok","redis":"ok"}}
+```
+
+Services restart automatically on crash or reboot (`restart: unless-stopped`). The `./data/` directory (glossary + RAG vector store) is bind-mounted so it survives container rebuilds.
+
+### Bare-metal systemd path (RHEL / Ubuntu)
+
+```bash
+# 1. Create a dedicated user
+sudo useradd -r -s /sbin/nologin text-checker
+
+# 2. Clone to /opt and install deps
+sudo git clone https://github.com/skyakash/text-checker.git /opt/text-checker
+cd /opt/text-checker && sudo uv sync --no-dev
+sudo cp .env.prod.example .env.prod && sudo $EDITOR .env.prod
+
+# 3. Install and start the systemd unit
+sudo cp deploy/text-checker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now text-checker
+
+# 4. Install log rotation
+sudo cp deploy/logrotate.conf /etc/logrotate.d/text-checker
+```
+
+### Backup and restore
+
+```bash
+# Backup (./data/ → timestamped tarball; old backups auto-pruned after 30 days)
+./scripts/backup.sh
+
+# Restore
+tar -xzf backups/text-checker-data-2026-06-25T10-30-00.tar.gz
+```
+
+### Updating
+
+```bash
+# For Docker Compose: backs up, pulls code, rebuilds image, restarts, polls /readyz
+./scripts/update.sh
+
+# For bare-metal systemd:
+cd /opt/text-checker
+sudo git pull --ff-only
+sudo uv sync --no-dev
+sudo systemctl restart text-checker
+```
 
 ## Running on Linux / RHEL
 
