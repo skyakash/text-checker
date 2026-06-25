@@ -9,6 +9,7 @@ from ..api.schemas import (
 )
 from ..config import settings
 from ..glossary.store import get_store as get_glossary_store
+from ..observability.metrics import rag_retrieval_score
 from ..providers.base import GenerationRequest
 from ..providers.registry import ProviderRegistry
 from ..rag.embeddings import EmbeddingsClient
@@ -32,13 +33,19 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
                 base_url=settings.rag_embedding_base_url or settings.ollama_base_url,
                 model=settings.rag_embedding_model,
             )
-            rag_results = await rag_retrieve(
+            # Retrieve unfiltered so we can observe the full score distribution
+            # for operators tuning RAG_MIN_SCORE from real traffic; then apply
+            # the floor before returning chunks to the prompt builder.
+            all_results = await rag_retrieve(
                 req.text,
                 k=settings.rag_top_k,
                 store=store,
                 embedder=embedder,
-                min_score=settings.rag_min_score,
+                min_score=0.0,
             )
+            for chunk in all_results:
+                rag_retrieval_score.labels(mode=req.mode.value).observe(chunk.score)
+            rag_results = [c for c in all_results if c.score >= settings.rag_min_score]
 
     sys_prompt_base = prompts.system_prompt(req.mode)
     if rag_results:

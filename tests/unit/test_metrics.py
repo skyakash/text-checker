@@ -69,3 +69,40 @@ def test_upstream_error_increments_error_counter(
         client.post("/v1/correct", json={"text": "their going home", "mode": "grammar"})
     metrics = client.get("/metrics").text
     assert 'status="upstream_error"' in metrics
+
+
+def test_rag_retrieval_score_histogram_observed_per_chunk(
+    client: TestClient,
+    isolated_registry: ProviderRegistry,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Seed two chunks; one will retrieve at a high score, both will be observed.
+    from text_checker.rag import store as rag_store_module
+    from text_checker.rag.embeddings import EmbeddingsClient
+
+    store = rag_store_module._store
+    assert store is not None
+    store.add(
+        ids=["src::1::0", "src::2::0"],
+        texts=["chunk one content", "chunk two content"],
+        embeddings=[[0.1, 0.2, 0.3, 0.4], [0.4, 0.3, 0.2, 0.1]],
+        metadatas=[
+            {"source": "src", "section": "A", "chunk_index": 0},
+            {"source": "src", "section": "B", "chunk_index": 0},
+        ],
+    )
+
+    async def _embed(self: EmbeddingsClient, texts: list[str]) -> list[list[float]]:
+        return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
+
+    monkeypatch.setattr(EmbeddingsClient, "embed", _embed)
+
+    with respx.mock(base_url="http://ollama.test/v1") as mock:
+        mock.post("/chat/completions").mock(return_value=_mock_ok())
+        client.post(
+            "/v1/correct",
+            json={"text": "we fixed the editor", "mode": "release-note"},
+        )
+
+    metrics = client.get("/metrics").text
+    assert 'rag_retrieval_score_count{mode="release-note"} 2.0' in metrics
