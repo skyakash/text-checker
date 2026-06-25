@@ -13,7 +13,7 @@ from text_checker.rag import store as rag_store
 @pytest.fixture(autouse=True)
 def reset_request_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     ratelimit.reset()
-    idempotency.get_cache().reset()
+    idempotency.reset()
     glossary_store._store = glossary_store.GlossaryStore(tmp_path / "glossary.json")
     rag_store._store = rag_store.RagStore(
         tmp_path / "rag", collection_name=f"test_{tmp_path.name}"

@@ -20,7 +20,7 @@ async def correct(
     cache: IdempotencyCache = Depends(get_cache),
 ) -> CorrectResponse:
     if idem_key:
-        cached = cache.get(idem_key)
+        cached = await cache.get(idem_key)
         if cached is not None:
             return cached
 
@@ -43,7 +43,7 @@ async def correct(
     )
 
     if idem_key:
-        cache.put(idem_key, resp)
+        await cache.put(idem_key, resp)
     return resp
 
 

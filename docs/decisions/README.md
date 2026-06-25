@@ -51,3 +51,4 @@ Status flow: `Proposed → Accepted → Superseded by NNNN`. We don't delete sup
 | [0010](0010-llm-based-glossary-extraction.md) | LLM-based glossary extraction from product docs | Accepted |
 | [0011](0011-tighter-rag-defaults.md) | Tighter RAG defaults: min_score floor and skip for grammar mode | Accepted |
 | [0012](0012-glossary-rag-interaction.md) | Mask glossary terms inside RAG chunks, and canonicalize the guard's mask check | Accepted |
+| [0013](0013-redis-backed-state.md) | Redis-backed rate-limit and idempotency for multi-replica deployment | Accepted |

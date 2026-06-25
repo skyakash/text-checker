@@ -12,12 +12,15 @@ services:
       DEFAULT_MODEL: qwen2.5:0.5b
       API_KEYS: dev-key-change-me
       LOG_LEVEL: INFO
+      REDIS_URL: redis://redis:6379/0
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
-      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,ollama,service,prometheus}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,ollama,redis,service,prometheus}
       SSL_CERT_FILE: ${SSL_CERT_FILE:-}
     depends_on:
       ollama:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
   ollama:
@@ -34,6 +37,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 
   prometheus:
     image: prom/prometheus:latest

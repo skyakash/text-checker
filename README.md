@@ -503,7 +503,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `RAG_TOP_K` | `3` | Number of chunks to retrieve and inject |
 | `RAG_MIN_SCORE` | `0.50` | Drop chunks below this cosine similarity. Calibrated for `nomic-embed-text` on small-to-medium corpora; raise to 0.60–0.70 for dense corpora where stricter matches are available. Use `rag search` to see your actual score distribution before tuning. |
 | `RAG_SKIP_MODES` | `grammar` | Comma-separated modes that skip RAG entirely. Per-request `use_rag: true` overrides. |
-| `REDIS_URL` | (empty) | Reserved for Phase 1 |
+| `REDIS_URL` | (empty) | Empty = in-memory rate-limit + idempotency (single replica). Set to a redis URL (e.g., `redis://localhost:6379/0`) to switch both to Redis for multi-replica deployment. See [ADR-0013](docs/decisions/0013-redis-backed-state.md). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | Reserved for Phase 1 |
 
 ## API reference
