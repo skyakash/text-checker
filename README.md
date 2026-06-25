@@ -12,6 +12,8 @@ An internal HTTP service that grammar-, style-, and clarity-corrects English tex
 - [Prerequisites](#prerequisites)
 - [Setup and first run](#setup-and-first-run)
 - [Quick start: full stack walkthrough](#quick-start-full-stack-walkthrough)
+- [Running on Linux / RHEL](#running-on-linux--rhel)
+- [Running behind a corporate proxy](#running-behind-a-corporate-proxy)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
 - [Worked examples](#worked-examples)
@@ -101,12 +103,29 @@ Full design rationale, locked decisions, and the phased roadmap live in [docs/ar
 
 ## Prerequisites
 
-- **macOS or Linux** (the service itself runs anywhere Python does; instructions are tested on macOS)
-- **Python 3.12+** (the project pins 3.12; uv will fetch it automatically if you don't have it)
-- **[uv](https://docs.astral.sh/uv/)** for dependency management (`brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh | sh`)
-- **An OpenAI-compatible LLM endpoint** — by default the service expects [Ollama](https://ollama.com/) on `localhost:11434`. vLLM, llama.cpp's `llama-server`, or a cloud endpoint all work too.
-- **An embedding model** if you'll use RAG — pull once with `ollama pull nomic-embed-text` (~270 MB).
-- **Docker** (optional) — only needed if you want to run the full local stack (service + Ollama + Prometheus) with `docker compose`.
+The service is pure Python — it runs on macOS, any modern Linux (RHEL 8/9, Ubuntu 20.04+, Debian, Alpine via Docker), and Windows via WSL. All commands below are tested on macOS and RHEL 9.
+
+### Required
+
+- **Python 3.12+** — the project pins 3.12; `uv` will download and install it for you if you don't have it.
+- **[uv](https://docs.astral.sh/uv/)** — dependency manager.
+- **An OpenAI-compatible LLM endpoint** — [Ollama](https://ollama.com/) on `localhost:11434` by default. vLLM, llama.cpp's `llama-server`, Anthropic, or OpenAI all work via the same provider abstraction.
+
+### Optional
+
+- **An embedding model** if you'll use RAG — `ollama pull nomic-embed-text` (~270 MB).
+- **Docker + Docker Compose** — for the full local stack (service + Ollama + Prometheus) via `make up`.
+
+### Install commands by OS
+
+| Tool | macOS | RHEL 8 / 9 | Ubuntu / Debian |
+|---|---|---|---|
+| `uv` | `brew install uv` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| Python 3.12 | `brew install python@3.12` *or* let `uv` install it | `sudo dnf module install python:3.12` *or* let `uv` install it | `sudo apt install python3.12` *or* let `uv` install it |
+| Ollama | `brew install ollama && ollama serve &` | `curl -fsSL https://ollama.com/install.sh \| sh` (registers as systemd unit, auto-starts) | `curl -fsSL https://ollama.com/install.sh \| sh` |
+| Docker | Docker Desktop from docker.com | `sudo dnf install -y docker docker-compose-plugin` | `sudo apt install -y docker.io docker-compose-plugin` |
+
+If letting `uv` install Python 3.12 sounds like a footgun, it's not — `uv` downloads pre-built CPython binaries from Astral's mirror, isolates them under `~/.local/share/uv/python/`, and pins them to the project via `.python-version`. Nothing changes on the system Python.
 
 ## Setup and first run
 
@@ -298,6 +317,165 @@ uv run python -m text_checker.glossary add "Workspace"
 ```
 
 Both stores persist under `./data/` (gitignored). Back up the directory to back up your knowledge base.
+
+## Running on Linux / RHEL
+
+Same `make install` / `make dev` workflow as macOS. Platform-specific notes only.
+
+### Bare-metal install on RHEL 9
+
+```bash
+# Optional: build deps for any wheels that need compilation.
+# Most wheels (chromadb, lxml, pdfplumber) ship binary; this is only needed
+# in restricted environments.
+sudo dnf install -y gcc python3.12-devel
+
+# uv + ollama
+curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh   # registers ollama as a systemd service
+
+# clone, install, run
+git clone https://github.com/skyakash/text-checker.git
+cd text-checker
+make install
+make dev
+```
+
+### Open the firewall
+
+```bash
+sudo firewall-cmd --add-port=8080/tcp --permanent
+sudo firewall-cmd --reload
+```
+
+### SELinux and Docker bind-mounts
+
+If you bind-mount `./data/` into the container for persistence (instead of using a named volume), SELinux will block the container from reading or writing it. Append `:Z` to the mount so Docker relabels it:
+
+```yaml
+volumes:
+  - ./data:/app/data:Z
+```
+
+Named volumes (the compose file's default for Ollama) don't have this problem.
+
+### Managing Ollama under systemd
+
+The Linux installer registers Ollama as a unit. Useful commands:
+
+```bash
+sudo systemctl status ollama
+sudo journalctl -u ollama -f          # tail logs
+sudo systemctl restart ollama
+```
+
+Pulled models live in `/usr/share/ollama/.ollama/` (not `~/.ollama` like macOS).
+
+## Running behind a corporate proxy
+
+The service uses `httpx` for all outbound calls, and `httpx` reads `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the environment automatically. **No Python code changes are needed** — just set the env vars correctly across every layer.
+
+### Required env vars
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example:8080
+export HTTP_PROXY=http://proxy.corp.example:8080
+# Critical: bypass the proxy for local Ollama and any internal hostnames.
+# Missing this is the most common proxy mistake.
+export NO_PROXY=localhost,127.0.0.1,ollama,service,prometheus
+```
+
+For a persistent setup, put the same lines in `.env` (the `.env.example` file shows them commented out).
+
+### Ollama under systemd needs its own proxy config
+
+The service env vars do **not** propagate to the Ollama daemon. To pull models through the proxy, override the systemd unit:
+
+```bash
+sudo systemctl edit ollama
+```
+
+Add:
+
+```ini
+[Service]
+Environment="HTTPS_PROXY=http://proxy.corp.example:8080"
+Environment="HTTP_PROXY=http://proxy.corp.example:8080"
+Environment="NO_PROXY=localhost,127.0.0.1"
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+If running Ollama manually (`ollama serve` in a terminal), just export the vars in that shell first.
+
+### Docker build behind a proxy
+
+The Dockerfile accepts proxy as build args (needed for `uv sync` to reach PyPI):
+
+```bash
+docker build \
+  --build-arg HTTP_PROXY=$HTTP_PROXY \
+  --build-arg HTTPS_PROXY=$HTTPS_PROXY \
+  --build-arg NO_PROXY=$NO_PROXY \
+  -t text-checker:dev .
+```
+
+### docker-compose behind a proxy
+
+The compose file passes proxy env vars through to both `service` and `ollama` containers automatically when set in your shell:
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example:8080
+export NO_PROXY=localhost,127.0.0.1,ollama,service,prometheus
+docker compose up --build
+```
+
+`NO_PROXY` **must** include the compose service names (`ollama`, `service`, `prometheus`) — otherwise inter-container HTTP calls get sent through the external proxy and fail.
+
+### Corporate TLS-intercepting proxies (custom CA)
+
+Many corporate proxies decrypt outbound HTTPS using their own root CA. Python's `ssl` module needs that CA to trust the proxy:
+
+```bash
+# bare metal
+export SSL_CERT_FILE=/etc/pki/ca-trust/source/anchors/corp-ca.pem
+
+# or update the system trust store on RHEL
+sudo cp corp-ca.pem /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust
+```
+
+For Docker, mount the CA into the container:
+
+```yaml
+# docker-compose.yml override
+services:
+  service:
+    volumes:
+      - /etc/pki/ca-trust/source/anchors/corp-ca.pem:/etc/ssl/certs/corp-ca.pem:ro
+    environment:
+      SSL_CERT_FILE: /etc/ssl/certs/corp-ca.pem
+```
+
+The compose file's `SSL_CERT_FILE: ${SSL_CERT_FILE:-}` line already forwards the variable from your shell — combined with a volume mount in an override file, that's enough.
+
+### Verifying the proxy setup
+
+```bash
+# proxy reachable
+curl --proxy $HTTPS_PROXY -sI https://api.openai.com/v1/models | head -1
+
+# from inside the running service container
+docker compose exec service python -c \
+  "import httpx; print(httpx.get('https://api.openai.com/v1/models', timeout=10).status_code)"
+```
+
+Both should return a non-zero exit and a valid HTTP status (401 from OpenAI is fine — it means the request reached them).
 
 ## Configuration
 

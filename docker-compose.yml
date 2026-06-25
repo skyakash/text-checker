@@ -1,12 +1,21 @@
 services:
   service:
-    build: .
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
     ports: ["8080:8080"]
     environment:
       OLLAMA_BASE_URL: http://ollama:11434/v1
       DEFAULT_MODEL: qwen2.5:0.5b
       API_KEYS: dev-key-change-me
       LOG_LEVEL: INFO
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,ollama,service,prometheus}
+      SSL_CERT_FILE: ${SSL_CERT_FILE:-}
     depends_on:
       ollama:
         condition: service_healthy
@@ -16,6 +25,10 @@ services:
     ports: ["11434:11434"]
     volumes:
       - ollama-data:/root/.ollama
+    environment:
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1}
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 5s

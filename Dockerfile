@@ -1,4 +1,15 @@
 FROM python:3.12-slim AS builder
+
+# Proxy support for builds behind a corporate proxy. Pass at build time:
+#   docker build --build-arg HTTP_PROXY=... --build-arg HTTPS_PROXY=... \
+#                --build-arg NO_PROXY=... -t text-checker:dev .
+ARG HTTP_PROXY=
+ARG HTTPS_PROXY=
+ARG NO_PROXY=
+ENV HTTP_PROXY=${HTTP_PROXY} \
+    HTTPS_PROXY=${HTTPS_PROXY} \
+    NO_PROXY=${NO_PROXY}
+
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 WORKDIR /app
 ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
