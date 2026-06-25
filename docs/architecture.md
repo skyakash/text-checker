@@ -188,6 +188,16 @@ Moving to multi-replica deployment requires a shared store. Redis is the planned
 - **Phase 3 — Critic-reviser and chunker.** Opt-in `quality_tier=high` adds a bounded writer → critic → reviser loop. Sentence-aware chunker for long inputs.
 - **Phase 4 — Example RAG and fine-tune.** Few-shot RAG over approved (before, after) corrections (L3 memory), per-tenant LoRA candidates gated by the eval harness (L4).
 
+## Known model-quality-bound limitations
+
+Surfaced by live testing on 2026-06-25 with `qwen2.5:7b-instruct`. Neither is a pipeline bug — both are bounded by model quality and addressed by either prompt engineering, a stronger model, or Phase 2 work.
+
+**RAG over-grounding.** When RAG retrieves chunks closely matching the input, the 7B model occasionally lifts factual content from the chunks into its output, even though the system prompt says "Do not introduce information not present in the input text." Example: `"we improved the hallucination guard in text-checker"` (release-note mode) produced `"The Hallucination Guard in text-checker now returns the original text, not an error."` — the trailing clause is verbatim from ADR-0005's title. The hallucination guard does not catch this because the edit ratio (0.47) stays under the per-mode threshold and no masked tokens were dropped. Mitigations: sharper system prompt for non-grammar modes (Phase 2 candidate), LLM-judge for over-grounding detection (Phase 2), or stronger model.
+
+**Pronoun substitution for placeholder.** In `style` mode with very short inputs (e.g., `"flowstate is great"`), the 7B model sometimes substitutes a pronoun for a masked glossary placeholder under the "tighten phrasing" instruction, producing output like `"It is great."`. The guard correctly rejects (canonical glossary term missing), so the user gets safe fallback. ADR-0012's fixes don't apply because no RAG context is involved and the model doesn't write the term in any case. Mitigation: stronger model. With `quality_tier=high` routing to a cloud provider, this case succeeds.
+
+Both findings are recorded for future contributors so they aren't re-investigated as bugs. The safe-fallback design (ADR-0005) means users never see broken output from either failure mode — they get their original text plus `flagged: true` plus the model's actual output for debugging.
+
 ## What is intentionally out
 
 Documented choices, not oversights.
