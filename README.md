@@ -672,6 +672,25 @@ uv run python -m text_checker.rag reset
 
 - `correct_requests_total{mode, model, status}` — counter. `status` is `ok`, `flagged`, `rejected_lang`, `rejected_size`, or `upstream_error`.
 - `correct_latency_seconds{mode, model}` — histogram of end-to-end correction latency.
+- `rag_retrieval_score{mode}` — histogram of cosine similarity scores for every chunk returned by RAG retrieval, observed **before** the `RAG_MIN_SCORE` filter. Lets you calibrate the floor from real traffic.
+
+Useful PromQL for tuning `RAG_MIN_SCORE`:
+
+```promql
+# Median retrieval score per mode — if this sits well above your floor,
+# you have headroom to raise the floor for stricter matches.
+histogram_quantile(0.5, sum(rate(rag_retrieval_score_bucket[5m])) by (le, mode))
+
+# 95th percentile — anything below this is the band you would lose by
+# raising the floor; anything above is signal you'd keep.
+histogram_quantile(0.95, sum(rate(rag_retrieval_score_bucket[5m])) by (le, mode))
+```
+
+Without Prometheus, the same shape is visible by curl:
+
+```bash
+curl -s localhost:8080/metrics/ | grep "^rag_retrieval_score" | grep -v "^#"
+```
 
 Scrape config snippet (for the docker-compose stack):
 

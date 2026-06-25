@@ -165,7 +165,7 @@ model override set                     → ollama + that model
 
 ## Observability
 
-- **Prometheus**: `correct_requests_total{mode, model, status}` counter and `correct_latency_seconds{mode, model}` histogram. `status` distinguishes successful corrections from flagged outputs from each error class.
+- **Prometheus**: `correct_requests_total{mode, model, status}` counter and `correct_latency_seconds{mode, model}` histogram. `status` distinguishes successful corrections from flagged outputs from each error class. `rag_retrieval_score{mode}` histogram captures per-chunk cosine scores observed before `RAG_MIN_SCORE` filtering, so the floor can be calibrated empirically from real traffic.
 - **Structured logs**: one JSON line per request via `structlog`, excluding the noise endpoints.
 - **Tracing**: deferred to Phase 1.
 
