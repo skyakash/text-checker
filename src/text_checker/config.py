@@ -30,11 +30,16 @@ class Settings(BaseSettings):
     rag_embedding_model: str = "nomic-embed-text"
     rag_embedding_base_url: str | None = None
     rag_top_k: int = 3
-    rag_min_score: float = 0.0
+    rag_min_score: float = 0.65
+    rag_skip_modes: str = "grammar"
 
     @property
     def api_keys_set(self) -> set[str]:
         return {k.strip() for k in self.api_keys.split(",") if k.strip()}
+
+    @property
+    def rag_skip_modes_set(self) -> set[str]:
+        return {m.strip() for m in self.rag_skip_modes.split(",") if m.strip()}
 
 
 settings = Settings()

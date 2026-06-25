@@ -49,3 +49,4 @@ Status flow: `Proposed → Accepted → Superseded by NNNN`. We don't delete sup
 | [0008](0008-english-only-no-chunker.md) | English-only inputs with a 5000-char hard limit | Accepted |
 | [0009](0009-chroma-embedded-for-rag-store.md) | Chroma embedded for the RAG vector store, with a planned swap to pgvector | Accepted |
 | [0010](0010-llm-based-glossary-extraction.md) | LLM-based glossary extraction from product docs | Accepted |
+| [0011](0011-tighter-rag-defaults.md) | Tighter RAG defaults: min_score floor and skip for grammar mode | Accepted |

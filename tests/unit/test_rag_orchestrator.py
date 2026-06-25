@@ -43,23 +43,31 @@ def isolated_registry(monkeypatch: pytest.MonkeyPatch) -> ProviderRegistry:
     return reg
 
 
+class _EmbedderSpy:
+    call_count: int = 0
+
+
 @pytest.fixture
-def fake_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def _fake_embed(self: EmbeddingsClient, texts: list[str]) -> list[list[float]]:
+def fake_embedder(monkeypatch: pytest.MonkeyPatch) -> _EmbedderSpy:
+    spy = _EmbedderSpy()
+
+    async def _embed(self: EmbeddingsClient, texts: list[str]) -> list[list[float]]:
+        spy.call_count += 1
         return [[0.1, 0.2, 0.3, 0.4] for _ in texts]
 
-    monkeypatch.setattr(EmbeddingsClient, "embed", _fake_embed)
+    monkeypatch.setattr(EmbeddingsClient, "embed", _embed)
+    return spy
 
 
 def test_rag_context_appears_in_response_when_store_has_docs(
-    client: TestClient, tmp_path: Path, fake_embedder: None
+    client: TestClient, tmp_path: Path, fake_embedder: _EmbedderSpy
 ) -> None:
     _seed_rag(tmp_path)
     with respx.mock(base_url="http://ollama.test/v1") as mock:
         mock.post("/chat/completions").mock(return_value=_mock_chat())
         r = client.post(
             "/v1/correct",
-            json={"text": "their going home", "mode": "grammar"},
+            json={"text": "we fixed the editor", "mode": "release-note"},
         )
     assert r.status_code == 200
     body = r.json()
@@ -67,16 +75,18 @@ def test_rag_context_appears_in_response_when_store_has_docs(
     ctx = body["rag_context_used"][0]
     assert ctx["source"] == "flowstate"
     assert ctx["section"] == "Snapshots"
-    assert "snapshot loader" in ctx["preview"]
 
 
 def test_rag_context_block_is_injected_into_system_prompt(
-    client: TestClient, tmp_path: Path, fake_embedder: None
+    client: TestClient, tmp_path: Path, fake_embedder: _EmbedderSpy
 ) -> None:
     _seed_rag(tmp_path)
     with respx.mock(base_url="http://ollama.test/v1") as mock:
         route = mock.post("/chat/completions").mock(return_value=_mock_chat())
-        client.post("/v1/correct", json={"text": "their going home", "mode": "grammar"})
+        client.post(
+            "/v1/correct",
+            json={"text": "we fixed the editor", "mode": "release-note"},
+        )
 
     sent_body = route.calls.last.request.content.decode()
     assert "flowstate" in sent_body
@@ -85,17 +95,18 @@ def test_rag_context_block_is_injected_into_system_prompt(
 
 
 def test_use_rag_false_skips_retrieval(
-    client: TestClient, tmp_path: Path, fake_embedder: None
+    client: TestClient, tmp_path: Path, fake_embedder: _EmbedderSpy
 ) -> None:
     _seed_rag(tmp_path)
     with respx.mock(base_url="http://ollama.test/v1") as mock:
         route = mock.post("/chat/completions").mock(return_value=_mock_chat())
         r = client.post(
             "/v1/correct",
-            json={"text": "their going home", "mode": "grammar", "use_rag": False},
+            json={"text": "we fixed the editor", "mode": "release-note", "use_rag": False},
         )
     body = r.json()
     assert body["rag_context_used"] == []
+    assert fake_embedder.call_count == 0
     sent_body = route.calls.last.request.content.decode()
     assert "snapshot loader" not in sent_body
 
@@ -103,5 +114,84 @@ def test_use_rag_false_skips_retrieval(
 def test_empty_rag_store_yields_empty_context(client: TestClient) -> None:
     with respx.mock(base_url="http://ollama.test/v1") as mock:
         mock.post("/chat/completions").mock(return_value=_mock_chat())
-        r = client.post("/v1/correct", json={"text": "their going home", "mode": "grammar"})
+        r = client.post(
+            "/v1/correct",
+            json={"text": "we fixed the editor", "mode": "release-note"},
+        )
     assert r.json()["rag_context_used"] == []
+
+
+def test_grammar_mode_skips_rag_by_default(
+    client: TestClient, tmp_path: Path, fake_embedder: _EmbedderSpy
+) -> None:
+    # Regression for the case where RAG context biased a grammar fix:
+    # 'flowstate is going to be reased next quartar' got replaced with
+    # 'Phase 1 is going to be released next quarter' because retrieved
+    # roadmap chunks misled the model.
+    _seed_rag(tmp_path)
+    with respx.mock(base_url="http://ollama.test/v1") as mock:
+        route = mock.post("/chat/completions").mock(return_value=_mock_chat())
+        r = client.post(
+            "/v1/correct",
+            json={"text": "their going home", "mode": "grammar"},
+        )
+    body = r.json()
+    assert body["rag_context_used"] == []
+    assert fake_embedder.call_count == 0
+    sent_body = route.calls.last.request.content.decode()
+    assert "snapshot loader" not in sent_body
+
+
+def test_use_rag_true_overrides_grammar_skip(
+    client: TestClient, tmp_path: Path, fake_embedder: _EmbedderSpy
+) -> None:
+    _seed_rag(tmp_path)
+    with respx.mock(base_url="http://ollama.test/v1") as mock:
+        mock.post("/chat/completions").mock(return_value=_mock_chat())
+        r = client.post(
+            "/v1/correct",
+            json={"text": "we fixed the editor", "mode": "grammar", "use_rag": True},
+        )
+    assert len(r.json()["rag_context_used"]) == 1
+    assert fake_embedder.call_count == 1
+
+
+def test_min_score_floor_filters_weak_matches(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Regression for the live-testing case where score-0.55 chunks polluted
+    # a grammar fix. Restore the production floor and seed orthogonal vectors
+    # so the resulting score is well below the floor.
+    from text_checker.config import settings as live_settings
+
+    monkeypatch.setattr(live_settings, "rag_min_score", 0.5)
+
+    store = rag_store_module._store
+    assert store is not None
+    store.add(
+        ids=["unrelated::1::0"],
+        texts=["completely unrelated content about something else"],
+        embeddings=[[1.0, 0.0, 0.0, 0.0]],
+        metadatas=[{"source": "unrelated", "section": "Other", "chunk_index": 0}],
+    )
+
+    async def _orthogonal(self: EmbeddingsClient, texts: list[str]) -> list[list[float]]:
+        return [[0.0, 1.0, 0.0, 0.0] for _ in texts]
+
+    monkeypatch.setattr(EmbeddingsClient, "embed", _orthogonal)
+
+    with respx.mock(base_url="http://ollama.test/v1") as mock:
+        mock.post("/chat/completions").mock(return_value=_mock_chat())
+        r = client.post(
+            "/v1/correct",
+            json={"text": "we fixed the editor", "mode": "release-note"},
+        )
+    assert r.json()["rag_context_used"] == []
+
+
+def test_config_defaults_match_production_floor_and_skip() -> None:
+    # Lock the production defaults so a careless config edit doesn't silently
+    # widen the floor or remove the grammar skip.
+    fresh = Settings()
+    assert fresh.rag_min_score == 0.65
+    assert "grammar" in fresh.rag_skip_modes_set

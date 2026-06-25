@@ -323,7 +323,8 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `RAG_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model served via Ollama |
 | `RAG_EMBEDDING_BASE_URL` | (defaults to `OLLAMA_BASE_URL`) | Override if embeddings live elsewhere |
 | `RAG_TOP_K` | `3` | Number of chunks to retrieve and inject |
-| `RAG_MIN_SCORE` | `0.0` | Drop chunks below this cosine similarity |
+| `RAG_MIN_SCORE` | `0.65` | Drop chunks below this cosine similarity. Tuned to ignore weak matches that pollute the prompt. |
+| `RAG_SKIP_MODES` | `grammar` | Comma-separated modes that skip RAG entirely. Per-request `use_rag: true` overrides. |
 | `REDIS_URL` | (empty) | Reserved for Phase 1 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | Reserved for Phase 1 |
 
@@ -780,7 +781,10 @@ Expected at 7B on CPU. For interactive UIs prefer `qwen2.5:0.5b` via `quality_ti
 The Prometheus mount lives at `/metrics/` with a trailing slash. Prometheus scrapers follow the redirect automatically; ad-hoc `curl` needs the trailing slash.
 
 **RAG retrieval is empty / `rag_context_used: []` always.**
-Either the store is empty (check `uv run python -m text_checker.rag list`) or the embedding model isn't pulled (`ollama pull nomic-embed-text`).
+Either the store is empty (check `uv run python -m text_checker.rag list`), the embedding model isn't pulled (`ollama pull nomic-embed-text`), the mode is in `RAG_SKIP_MODES` (default skips `grammar`), or all matches fell below `RAG_MIN_SCORE` (default 0.65). For grammar mode specifically, pass `"use_rag": true` per request to force RAG; for global change, set `RAG_SKIP_MODES=""`.
+
+**RAG retrieved context that misled the model.**
+This is exactly why the 0.65 floor and grammar skip exist (see ADR-0011). If you're seeing it for non-grammar modes, raise `RAG_MIN_SCORE` (e.g., to 0.75) or remove the offending source with `python -m text_checker.rag remove <source>` and re-ingest narrower content.
 
 **`rag ingest` fails with embedding errors.**
 The embedding endpoint defaults to `OLLAMA_BASE_URL`. If your embedding service lives elsewhere, set `RAG_EMBEDDING_BASE_URL`. Verify the model name with `ollama list` and confirm it matches `RAG_EMBEDDING_MODEL`.

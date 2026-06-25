@@ -23,6 +23,8 @@ async def run(req: CorrectRequest, registry: ProviderRegistry) -> CorrectRespons
 
     rag_results: list[StoredChunk] = []
     use_rag = settings.rag_enabled if req.use_rag is None else req.use_rag
+    if use_rag and req.use_rag is None and req.mode.value in settings.rag_skip_modes_set:
+        use_rag = False
     if use_rag:
         store = get_rag_store()
         if store.count() > 0:
