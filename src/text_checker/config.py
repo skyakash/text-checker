@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     rag_embedding_model: str = "nomic-embed-text"
     rag_embedding_base_url: str | None = None
     rag_top_k: int = 3
-    rag_min_score: float = 0.65
+    rag_min_score: float = 0.50
     rag_skip_modes: str = "grammar"
 
     @property

@@ -193,5 +193,5 @@ def test_config_defaults_match_production_floor_and_skip() -> None:
     # Lock the production defaults so a careless config edit doesn't silently
     # widen the floor or remove the grammar skip.
     fresh = Settings()
-    assert fresh.rag_min_score == 0.65
+    assert fresh.rag_min_score == 0.50
     assert "grammar" in fresh.rag_skip_modes_set

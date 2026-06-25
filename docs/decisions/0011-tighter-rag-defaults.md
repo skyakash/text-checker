@@ -22,7 +22,7 @@ The guard did the right thing. The system safely refused the bad correction. But
 
 Two default changes:
 
-1. **`RAG_MIN_SCORE` default raised from `0.0` to `0.65`.** Chunks with cosine similarity below 0.65 are dropped before reaching the prompt. The value is conservative enough to drop the 0.55-class matches that caused the original failure, while still passing the 0.7+ matches we see for genuinely relevant retrievals.
+1. **`RAG_MIN_SCORE` default raised from `0.0` to `0.50`.** Chunks with cosine similarity below 0.50 are dropped before reaching the prompt. An initial value of 0.65 was tried but proved too strict for `nomic-embed-text` on small-to-medium corpora — live testing showed genuinely relevant top-1 matches scoring 0.55–0.68, while irrelevant matches that caused the original failure scored 0.45–0.57. 0.50 sits at the lower edge of the relevant-match band; operators with denser corpora (where the model can find tighter matches) should raise it. `rag search <query>` shows the actual distribution for any installation.
 2. **New `RAG_SKIP_MODES` setting, default `"grammar"`.** When the request mode is in this comma-separated set, RAG is skipped entirely for the request — the embedder is not called, no context is retrieved. A per-request `use_rag: true` override forces RAG on regardless (preserves the existing explicit-override semantics).
 
 Both values are configurable via env vars; the defaults reflect the lesson from live testing.

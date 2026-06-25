@@ -323,7 +323,7 @@ All configuration is via environment variables. Copy `.env.example` to `.env` an
 | `RAG_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model served via Ollama |
 | `RAG_EMBEDDING_BASE_URL` | (defaults to `OLLAMA_BASE_URL`) | Override if embeddings live elsewhere |
 | `RAG_TOP_K` | `3` | Number of chunks to retrieve and inject |
-| `RAG_MIN_SCORE` | `0.65` | Drop chunks below this cosine similarity. Tuned to ignore weak matches that pollute the prompt. |
+| `RAG_MIN_SCORE` | `0.50` | Drop chunks below this cosine similarity. Calibrated for `nomic-embed-text` on small-to-medium corpora; raise to 0.60–0.70 for dense corpora where stricter matches are available. Use `rag search` to see your actual score distribution before tuning. |
 | `RAG_SKIP_MODES` | `grammar` | Comma-separated modes that skip RAG entirely. Per-request `use_rag: true` overrides. |
 | `REDIS_URL` | (empty) | Reserved for Phase 1 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | (empty) | Reserved for Phase 1 |
