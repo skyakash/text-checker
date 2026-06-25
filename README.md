@@ -1073,7 +1073,7 @@ The Prometheus mount lives at `/metrics/` with a trailing slash. Prometheus scra
 Either the store is empty (check `uv run python -m text_checker.rag list`), the embedding model isn't pulled (`ollama pull nomic-embed-text`), the mode is in `RAG_SKIP_MODES` (default skips `grammar`), or all matches fell below `RAG_MIN_SCORE` (default 0.65). For grammar mode specifically, pass `"use_rag": true` per request to force RAG; for global change, set `RAG_SKIP_MODES=""`.
 
 **RAG retrieved context that misled the model.**
-This is exactly why the 0.65 floor and grammar skip exist (see ADR-0011). If you're seeing it for non-grammar modes, raise `RAG_MIN_SCORE` (e.g., to 0.75) or remove the offending source with `python -m text_checker.rag remove <source>` and re-ingest narrower content.
+This is exactly why the `RAG_MIN_SCORE` floor and grammar skip exist (see ADR-0011). If you're seeing it for non-grammar modes, raise `RAG_MIN_SCORE` (e.g., to 0.60–0.70) or remove the offending source with `python -m text_checker.rag remove <source>` and re-ingest narrower content.
 
 **`rag ingest` fails with embedding errors.**
 The embedding endpoint defaults to `OLLAMA_BASE_URL`. If your embedding service lives elsewhere, set `RAG_EMBEDDING_BASE_URL`. Verify the model name with `ollama list` and confirm it matches `RAG_EMBEDDING_MODEL`.
