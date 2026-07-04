@@ -54,5 +54,25 @@ services:
     volumes:
       - ./deploy/prometheus.yml:/etc/prometheus/prometheus.yml:ro
 
+  # Optional MCP HTTP server for bots and remote agents.
+  # Start with:  docker compose --profile mcp up -d
+  mcp:
+    profiles: ["mcp"]
+    build:
+      context: .
+      args:
+        HTTP_PROXY: ${HTTP_PROXY:-}
+        HTTPS_PROXY: ${HTTPS_PROXY:-}
+        NO_PROXY: ${NO_PROXY:-}
+    command: ["text-checker-mcp", "--http"]
+    ports: ["8081:8081"]
+    environment:
+      TEXT_CHECKER_URL: http://service:8080
+      TEXT_CHECKER_API_KEY: dev-key-change-me
+      MCP_API_KEY: ${MCP_API_KEY:-dev-key-change-me}
+    depends_on:
+      service:
+        condition: service_started
+
 volumes:
   ollama-data:
