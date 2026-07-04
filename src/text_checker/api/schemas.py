@@ -49,3 +49,27 @@ class CorrectResponse(BaseModel):
     model_output: str | None = None
     rag_context_used: list[RagContext] = Field(default_factory=list)
     metrics: CorrectMetrics
+
+
+# ----- RAG ingestion API -----
+
+# Bigger than the pipeline's 5000-char cap — ingested docs are legitimately
+# large. Cap at 200KB to prevent a single request from monopolizing the
+# embedding pipeline or blowing out Chroma.
+RAG_INGEST_MAX_BYTES = 200_000
+
+
+class RagIngestRequest(BaseModel):
+    content: str = Field(min_length=1)
+    source: str = Field(min_length=1, max_length=200)
+    section: str | None = None
+
+
+class RagIngestResponse(BaseModel):
+    source: str
+    chunks_indexed: int
+
+
+class RagSourceInfo(BaseModel):
+    source: str
+    chunks: int

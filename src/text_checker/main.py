@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, Response
 
 from . import readiness
+from .api.rag_routes import router as rag_router
 from .api.routes import router
 from .config import settings
 from .observability.logging import configure_logging, get_logger
@@ -14,6 +15,7 @@ log = get_logger()
 
 app = FastAPI(title="text-checker", version="0.1.0")
 app.include_router(router, prefix="/v1")
+app.include_router(rag_router, prefix="/v1/rag")
 app.mount("/metrics", metrics_app)
 
 _LOG_SKIP_PATHS = {"/metrics", "/healthz", "/readyz"}

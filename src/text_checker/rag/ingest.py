@@ -15,6 +15,45 @@ class IngestResult:
     chunks: int
 
 
+async def ingest_content(
+    content: str,
+    source: str,
+    store: RagStore,
+    embedder: EmbeddingsClient,
+    file_label: str = "inline",
+    batch_size: int = 32,
+) -> IngestResult:
+    """Chunk, embed, and store an in-memory string.
+
+    Same re-ingest semantics as ingest_path: existing chunks for `source`
+    are removed before the new ones are added. Used by the HTTP API and
+    for any caller that already has text in memory.
+    """
+    store.remove_source(source)
+
+    chunks = chunker.chunk_text(content)
+    if not chunks:
+        return IngestResult(source=source, files=0, chunks=0)
+
+    for i in range(0, len(chunks), batch_size):
+        batch = chunks[i : i + batch_size]
+        texts = [c.text for c in batch]
+        embeddings = await embedder.embed(texts)
+        ids = [f"{source}::{file_label}::{c.index}" for c in batch]
+        metadatas = [
+            {
+                "source": source,
+                "file": file_label,
+                "section": c.section or "",
+                "chunk_index": c.index,
+            }
+            for c in batch
+        ]
+        store.add(ids=ids, texts=texts, embeddings=embeddings, metadatas=metadatas)
+
+    return IngestResult(source=source, files=1, chunks=len(chunks))
+
+
 async def ingest_path(
     path: Path,
     source: str,
