@@ -70,9 +70,9 @@ def _print_human(label: str, resp: dict[str, Any], show_diff: bool) -> None:
         if show_diff and resp.get("diff"):
             for change in resp["diff"]:
                 op = change.get("op", "?")
-                before = change.get("before", "")
-                after = change.get("after", "")
-                print(f"    {op}: {before!r} -> {after!r}")
+                old = change.get("old", "")
+                new = change.get("new", "")
+                print(f"    {op}: {old!r} -> {new!r}")
         elif not show_diff:
             print(f"  corrected: {resp.get('corrected_text', '')}")
     print(f"  model: {resp.get('model_used')}")

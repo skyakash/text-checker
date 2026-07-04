@@ -18,7 +18,7 @@ def _ok_response(corrected: str = "They're going home.") -> httpx.Response:
         json={
             "request_id": "r-1",
             "corrected_text": corrected,
-            "diff": [{"op": "replace", "before": "their", "after": "They're"}],
+            "diff": [{"op": "replace", "old": "their", "new": "They're"}],
             "model_used": "qwen2.5:7b-instruct",
             "flagged": False,
             "flag_reason": None,
