@@ -68,13 +68,17 @@ git clone https://github.com/skyakash/text-checker.git && cd text-checker
 uv sync
 
 # 2. Point at a local Ollama (or set OLLAMA_BASE_URL to any host)
-ollama pull qwen2.5:7b-instruct nomic-embed-text
+ollama pull qwen2.5:7b-instruct
+ollama pull nomic-embed-text
 
 # 3. Start the service
 API_KEYS="dev-key" make dev
 
-# 4. Ingest a product doc and correct a release note
-uv run python -m text_checker.rag ingest ./docs/product-overview.md --source overview
+# 4. Ingest a product doc via the running server (Chroma stays isolated
+#    to the service process — never open it from a second CLI process)
+uv run python -m text_checker.rag ingest ./docs/product-overview.md \
+  --source overview \
+  --server http://localhost:8080 --api-key dev-key
 
 curl -s -X POST http://localhost:8080/v1/correct \
   -H "X-API-Key: dev-key" -H "Content-Type: application/json" \

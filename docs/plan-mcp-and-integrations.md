@@ -1,6 +1,6 @@
 # Implementation Plan: MCP Server, Integrations, Model Routing
 
-Status: **Approved, ready to implement** (reviewed 2026-07-04)
+Status: **Implemented** (2026-07-04) — kept as implementation record. Follow-up fixes from architect review land on 2026-07-05 (see commits after `13ced90`). See [docs/tasks.md](tasks.md) for current status.
 Audience: the implementing session (Claude Opus). Everything needed is in this file, `docs/tasks.md`, and the ADRs — no prior conversation context required.
 
 ## Goal

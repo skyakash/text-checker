@@ -182,23 +182,38 @@ The HTTP transport enforces `X-API-Key` via a Starlette middleware. It fails clo
 
 - **Prometheus**: `correct_requests_total{mode, model, status}` counter and `correct_latency_seconds{mode, model}` histogram. `status` distinguishes successful corrections from flagged outputs from each error class. `rag_retrieval_score{mode}` histogram captures per-chunk cosine scores observed before `RAG_MIN_SCORE` filtering, so the floor can be calibrated empirically from real traffic.
 - **Structured logs**: one JSON line per request via `structlog`, excluding the noise endpoints.
-- **Tracing**: deferred to Phase 1.
+- **Tracing**: deferred (no backend to send to yet — was Phase 1, now on the "when we have somewhere to send them" shelf).
 
 ## Hardening
 
-All three are in-memory (single-replica) — see ADR-0007:
+Three defensive layers, all shipped:
 
-- API-key auth (`X-API-Key` validated against `API_KEYS`)
-- Per-key token-bucket rate limit (60 req/min)
-- Idempotency cache (`Idempotency-Key` header, 10-min TTL)
+- **API-key auth** (`X-API-Key` validated against `API_KEYS`) — ADR-0007 records the original design.
+- **Per-key rate limit** (60 req/min). Token bucket in-memory when `REDIS_URL` is empty; sliding-window `INCR` + `EXPIRE` in Redis when set (ADR-0013). Multi-replica safe.
+- **Idempotency cache** (`Idempotency-Key` header, 10-min TTL). In-memory TTL dict when `REDIS_URL` is empty; JSON-serialised in Redis when set. Both fail open — if Redis is unreachable the request proceeds without dedup rather than 503ing.
 
-Moving to multi-replica deployment requires a shared store. Redis is the planned target — Phase 1.
+`/readyz` actively probes both Ollama and Redis with a 5-second cache (ADR-0014) and returns 503 with per-component detail when either is unhealthy.
+
+The MCP server (ADR-0015) is a thin HTTP client of `/v1/correct` — MCP consumers can't bypass any of the above. HTTP transport requires the same `X-API-Key`, uses `hmac.compare_digest` to close the timing side-channel, and fails closed when no key is configured.
 
 ## Roadmap
 
+**Shipped**
+
 - **Stage 1.** Service, deterministic pipeline, provider abstraction, all four modes, hallucination guard with safe fallback, API-key auth, per-key rate limit, idempotency, Prometheus metrics, structured logs, golden-set eval harness.
-- **Stage 2 (current).** Glossary store + masker integration, LLM-based glossary extraction, RAG over product docs (Chroma + Ollama embeddings, multi-format ingest, retrieval, orchestrator integration, per-request override, response context surfaced).
-- **Phase 1 — Production readiness.** Redis-backed rate-limit and idempotency, Postgres request log, OpenTelemetry traces, active provider probe on `/readyz`, helm chart in `deploy/k8s/`. Swap Chroma to pgvector once Postgres is up.
+- **Stage 2.** Glossary store + masker integration, LLM-based glossary extraction, RAG over product docs (Chroma + Ollama embeddings, multi-format ingest, retrieval, orchestrator integration, per-request override, response context surfaced).
+- **Phase 1 core.** Redis-backed rate-limit and idempotency (ADR-0013), active `/readyz` probe (ADR-0014), single-replica production recipe (ADR-0014).
+- **MCP + integrations.** `provider:model` routing with a config-driven `custom` provider (ADR-0016), server-side RAG ingestion API + CLI `--server` mode, MCP server with stdio + HTTP transports (ADR-0015), VS Code Copilot integration, `text-checker-check` CLI for CI pipelines, Jira bot integration doc.
+
+**Remaining Phase 1**
+
+- Postgres request log — feeds Phase 2's eval flywheel.
+- Helm chart in `deploy/k8s/` — deferred; single-replica Docker Compose is the current production target.
+- pgvector swap for the RAG store — blocked on Postgres.
+- OpenTelemetry — deferred until a tracing backend is on the table.
+
+**Later phases**
+
 - **Phase 2 — Quality flywheel + multi-tenancy.** Real eval metrics (GLEU, ERRANT F0.5, BERTScore, LLM-judge), per-model Grafana scorecard, `/v1/feedback` endpoint, A/B routing, shadow traffic, per-tenant isolation for glossary and RAG.
 - **Phase 3 — Critic-reviser and chunker.** Opt-in `quality_tier=high` adds a bounded writer → critic → reviser loop. Sentence-aware chunker for long inputs.
 - **Phase 4 — Example RAG and fine-tune.** Few-shot RAG over approved (before, after) corrections (L3 memory), per-tenant LoRA candidates gated by the eval harness (L4).

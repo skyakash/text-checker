@@ -686,11 +686,16 @@ When `flagged: true`:
 
 ### `GET /v1/models`
 
-Lists the models the registry will route to, based on configuration.
+Lists the models the registry will route to, based on configuration. Each entry pairs a `provider` with a `model` — round-trip the same pair back as `provider:model` in the `model` field on `POST /v1/correct` to route explicitly.
 
 ```json
-["qwen2.5:7b-instruct", "qwen2.5:0.5b"]
+[
+  {"provider": "ollama", "model": "qwen2.5:7b-instruct"},
+  {"provider": "ollama", "model": "qwen2.5:0.5b"}
+]
 ```
+
+When cloud (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) or custom (`CUSTOM_BASE_URL` + `CUSTOM_MODEL`) providers are configured, additional entries appear. See [Switching models](#switching-models).
 
 ### `GET /healthz`
 
@@ -1286,16 +1291,25 @@ CUSTOM_MODEL=llama-3.3-70b
 
 Then `custom:llama-3.3-70b` becomes routable. Anything that speaks the OpenAI Chat Completions shape (vLLM, llama.cpp server, TGI, LM Studio, hosted APIs) slots in with no adapter code.
 
-Ask the running service which routes are configured:
+Ask the running service which routes are configured. Real output from a fresh install with only Ollama available:
 
 ```bash
 curl -s http://localhost:8080/v1/models -H "X-API-Key: dev-key-change-me" | jq
 # [
-#   {"provider": "ollama",    "model": "qwen2.5:7b-instruct"},
-#   {"provider": "ollama",    "model": "qwen2.5:0.5b"},
-#   {"provider": "anthropic", "model": "claude-haiku-4-5"},
-#   {"provider": "custom",    "model": "llama-3.3-70b"}
+#   {"provider": "ollama", "model": "qwen2.5:7b-instruct"},
+#   {"provider": "ollama", "model": "qwen2.5:0.5b"}
 # ]
+```
+
+_Illustrative_ — what the same call returns after `ANTHROPIC_API_KEY` and `CUSTOM_BASE_URL` + `CUSTOM_MODEL` are set:
+
+```json
+[
+  {"provider": "ollama",    "model": "qwen2.5:7b-instruct"},
+  {"provider": "ollama",    "model": "qwen2.5:0.5b"},
+  {"provider": "anthropic", "model": "claude-haiku-4-5"},
+  {"provider": "custom",    "model": "llama-3.3-70b"}
+]
 ```
 
 See [ADR-0016](docs/decisions/0016-provider-model-routing.md) for the design rationale.
@@ -1474,14 +1488,27 @@ text-checker/
 
 ## Roadmap
 
+**Shipped**
+
 - **Stage 1** — Service, pipeline, provider abstraction, hardening, Prometheus, structured logs, eval harness.
-- **Stage 2 (current)** — Glossary store + LLM-based extractor + masker integration. RAG over product docs with multi-format loaders, Chroma store, Ollama embeddings, retrieval, orchestrator integration.
-- **Phase 1 — Production readiness.** Redis-backed rate-limit + idempotency (multi-replica), Postgres request log, OpenTelemetry traces, helm chart, active provider probe on `/readyz`. Swap Chroma to pgvector when Postgres lands.
+- **Stage 2** — Glossary store + LLM-based extractor + masker integration. RAG over product docs with multi-format loaders, Chroma store, Ollama embeddings, retrieval, orchestrator integration.
+- **Phase 1 core** — Redis-backed rate-limit + idempotency for multi-replica (ADR-0013), active `/readyz` probe (ADR-0014), single-replica production deployment recipe (ADR-0014).
+- **MCP + integrations** — `provider:model` routing with config-driven `custom` provider for any OpenAI-compat backend (ADR-0016), server-side RAG ingestion API + CLI `--server` mode, MCP server with stdio + HTTP transports (ADR-0015), VS Code Copilot integration, `text-checker-check` CLI for CI pipelines, Jira bot pattern doc.
+
+**Remaining Phase 1**
+
+- Postgres request log — feeds Phase 2 quality-flywheel work.
+- Helm chart in `deploy/k8s/` — deferred; single-replica Docker Compose is today's production target.
+- pgvector swap for RAG — blocked on Postgres.
+- OpenTelemetry — deferred until a tracing backend is on the table.
+
+**Later phases**
+
 - **Phase 2 — Quality flywheel + multi-tenancy.** Real eval metrics (GLEU, BERTScore, LLM-judge), per-model Grafana scorecard, `/v1/feedback`, A/B routing, per-tenant glossary and RAG isolation.
 - **Phase 3 — Critic-reviser + chunker.** Opt-in `quality_tier=high` writer → critic → reviser loop with a one-revision cap. Sentence-aware chunker for long inputs.
 - **Phase 4 — Example RAG + fine-tune.** Few-shot RAG over approved (before, after) corrections. Per-tenant LoRA candidates gated by the eval harness.
 
-Full design rationale in [docs/architecture.md](docs/architecture.md). Individual decisions in [docs/decisions/](docs/decisions/).
+Full design rationale in [docs/architecture.md](docs/architecture.md). Individual decisions in [docs/decisions/](docs/decisions/). Task-level status in [docs/tasks.md](docs/tasks.md).
 
 ## Troubleshooting
 

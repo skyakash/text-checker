@@ -10,9 +10,9 @@ Complete task list for text-checker, updated as work progresses.
 
 | Status | Count |
 |---|---|
-| ✅ Done | 32 |
+| ✅ Done | 29 |
 | 🔵 Planned | 0 |
-| 🟡 Deferred | 7 |
+| 🟡 Deferred | 9 |
 | ⏭ Skipped / Superseded | 2 |
 
 Implementation notes for the completed MCP/integrations batch: [plan-mcp-and-integrations.md](plan-mcp-and-integrations.md)
