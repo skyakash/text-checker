@@ -104,6 +104,8 @@ MCP servers communicate over JSON-RPC, either via stdio (local processes) or HTT
 
 text-checker ships an MCP server as of ADR-0015. It's a thin HTTP client of the running text-checker service that exposes four tools — `correct_text`, `list_modes`, `list_models`, `ingest_document` — over both stdio (for VS Code Copilot Chat and Claude Code) and streamable HTTP on port 8081 (for remote bots). The HTTP transport requires the same `X-API-Key` the main service does; if no key is configured, the server fails closed rather than silently allowing traffic.
 
+> **Scope.** text-checker only implements the **MCP server** side. It does not consume any other MCP servers — the correction pipeline is deterministic (ADR-0003) and does not perform tool-use loops. If you're looking for an LLM that can call MCP tools during reasoning, that's a different product shape than this one.
+
 Start it locally:
 
 ```bash
