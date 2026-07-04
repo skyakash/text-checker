@@ -1246,6 +1246,10 @@ uv run python -m text_checker.rag remove handbook
 
 `ingest`, `list`, and `remove` all respect `--server`. `search` and `reset` remain local-only — `search` is a store-tuning debug tool that reads chunks directly; `reset` is destructive and never remote.
 
+Directory ingest against `--server` runs a cleanup pass first: any prior source equal to `--source` or prefixed by `<source>/` is deleted before the new files are added, so a file removed from the directory doesn't leave stale chunks behind.
+
+The `/v1/rag/ingest` endpoint caps content at 200 KB per request; oversized requests are rejected with 413 by a Content-Length middleware before the body is even parsed. For production deployments, enforce a matching request-body limit at your reverse proxy (nginx: `client_max_body_size 256k;`) to keep multi-MB uploads from ever touching the app. Bulk ingest shares the 60-request/minute rate limit with corrections — batches of more than ~60 files per minute per API key will hit 429; pace them or give the ingest job a dedicated key.
+
 ## Switching models
 
 You can override the model per request with a `provider:model` prefix so the same service can drive local, self-hosted, and cloud backends:

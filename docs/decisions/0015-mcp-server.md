@@ -89,3 +89,8 @@ uses it — one-key setups just work.
 - Adding tools is a matter of one decorator + one HTTP call. The full
   correction contract stays defined in the OpenAPI schema, not
   duplicated in MCP tool schemas.
+- The `ingest_document` tool inherits the service's 200 KB per-request
+  content cap (Content-Length middleware in `main.py`, backed by a
+  post-parse check in the endpoint). Production deployments should
+  also enforce a matching request-body limit at the reverse proxy so
+  multi-MB payloads are rejected before the app even sees them.

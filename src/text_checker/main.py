@@ -6,9 +6,17 @@ from fastapi.responses import JSONResponse, Response
 from . import readiness
 from .api.rag_routes import router as rag_router
 from .api.routes import router
+from .api.schemas import RAG_INGEST_MAX_BYTES
 from .config import settings
 from .observability.logging import configure_logging, get_logger
 from .observability.metrics import metrics_app
+
+# A little headroom over RAG_INGEST_MAX_BYTES (200 KB) — Pydantic's JSON
+# wrapping and header overhead means the raw Content-Length is a bit
+# larger than the content payload. The endpoint's post-parse check is
+# the authoritative backstop; this is an early cutoff to avoid reading
+# multi-MB bodies before rejecting them.
+_INGEST_CONTENT_LENGTH_LIMIT = RAG_INGEST_MAX_BYTES + 50_000
 
 configure_logging(settings.log_level)
 log = get_logger()
@@ -19,6 +27,28 @@ app.include_router(rag_router, prefix="/v1/rag")
 app.mount("/metrics", metrics_app)
 
 _LOG_SKIP_PATHS = {"/metrics", "/healthz", "/readyz"}
+
+
+@app.middleware("http")
+async def reject_oversized_ingest(request: Request, call_next) -> Response:  # type: ignore[no-untyped-def]
+    # Reject huge POSTs to /v1/rag/ingest BEFORE the body is read into
+    # memory. Without this, uvicorn's default (no cap) means a caller
+    # sending a 500 MB body wastes network + memory before the endpoint's
+    # RAG_INGEST_MAX_BYTES check fires post-parse. Clients can omit or
+    # lie about Content-Length; the post-parse check remains as backstop.
+    if request.method == "POST" and request.url.path == "/v1/rag/ingest":
+        cl = request.headers.get("content-length")
+        if cl and cl.isdigit() and int(cl) > _INGEST_CONTENT_LENGTH_LIMIT:
+            return JSONResponse(
+                {
+                    "detail": (
+                        f"request body exceeds {_INGEST_CONTENT_LENGTH_LIMIT} bytes; "
+                        f"content field cap is {RAG_INGEST_MAX_BYTES} bytes — split the document"
+                    )
+                },
+                status_code=413,
+            )
+    return await call_next(request)
 
 
 @app.middleware("http")

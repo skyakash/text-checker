@@ -185,6 +185,36 @@ def test_delete_source_with_slash_in_name(client: TestClient) -> None:
     assert listed == []
 
 
+def test_ingest_rejects_oversized_content_length_early(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Middleware should reject on Content-Length before the endpoint is
+    # entered — assert by spying on the ingest_content coroutine.
+    called = {"n": 0}
+
+    async def _fail(*args, **kwargs):  # type: ignore[no-untyped-def]
+        called["n"] += 1
+        return None
+
+    monkeypatch.setattr("text_checker.api.rag_routes.ingest_content", _fail)
+
+    # Send a request whose Content-Length exceeds the middleware cap.
+    # The body itself doesn't need to actually be that large in a
+    # TestClient — we spoof the header. Starlette respects the sent header.
+    huge_body = b'{"content":"x","source":"s"}'
+    r = client.post(
+        "/v1/rag/ingest",
+        content=huge_body,
+        headers={
+            "X-API-Key": "test-key",
+            "Content-Type": "application/json",
+            "Content-Length": str(RAG_INGEST_MAX_BYTES + 100_000),
+        },
+    )
+    assert r.status_code == 413
+    assert called["n"] == 0
+
+
 def test_ingest_accepts_label_field(client: TestClient) -> None:
     # A3 rename: field is `label`, not `section`. Section metadata comes
     # from markdown headings via the chunker; `label` is stored as the
