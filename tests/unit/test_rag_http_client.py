@@ -17,7 +17,7 @@ def test_ingest_sends_content_and_returns_chunk_count() -> None:
                 json={"source": "doc-a", "chunks_indexed": 4},
             )
         )
-        n = client.ingest(content="hello world", source="doc-a", section="intro")
+        n = client.ingest(content="hello world", source="doc-a", label="intro")
 
     assert n == 4
     assert route.called
@@ -67,3 +67,32 @@ def test_delete_source_returns_count() -> None:
         )
         n = client.delete_source("doomed")
     assert n == 2
+
+
+def test_delete_source_preserves_slash_in_path() -> None:
+    # Route uses {source:path}; the slash MUST survive URL encoding so the
+    # server sees "handbook/guide.md" as a single path segment.
+    client = RagHttpClient(base_url="http://svc.test", api_key="test-key")
+    with respx.mock(base_url="http://svc.test") as mock:
+        route = mock.delete("/v1/rag/sources/handbook/guide.md").mock(
+            return_value=httpx.Response(
+                200, json={"source": "handbook/guide.md", "chunks_removed": 3}
+            )
+        )
+        n = client.delete_source("handbook/guide.md")
+    assert n == 3
+    assert route.called
+
+
+def test_delete_source_encodes_special_characters_but_keeps_slash() -> None:
+    # Spaces get percent-encoded; slashes do NOT (they're part of the path
+    # for the :path converter).
+    client = RagHttpClient(base_url="http://svc.test", api_key="test-key")
+    with respx.mock(base_url="http://svc.test") as mock:
+        route = mock.delete("/v1/rag/sources/my%20docs/file%20one.md").mock(
+            return_value=httpx.Response(
+                200, json={"source": "my docs/file one.md", "chunks_removed": 1}
+            )
+        )
+        client.delete_source("my docs/file one.md")
+    assert route.called

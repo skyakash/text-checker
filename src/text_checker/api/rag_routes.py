@@ -37,13 +37,12 @@ async def ingest(
         )
     store = get_store()
     embedder = _embedder()
-    label = req.section or "inline"
     result = await ingest_content(
         content=req.content,
         source=req.source,
         store=store,
         embedder=embedder,
-        file_label=label,
+        file_label=req.label or "inline",
     )
     return RagIngestResponse(source=result.source, chunks_indexed=result.chunks)
 
@@ -56,7 +55,10 @@ async def list_sources(
     return [RagSourceInfo(source=s.source, chunks=s.chunks) for s in store.list_sources()]
 
 
-@router.delete("/sources/{source}")
+# `{source:path}` allows slashes in the source name — remote directory ingest
+# creates sources like "handbook/guide.md", and without the :path converter
+# those cannot be deleted (FastAPI's default path param stops at '/').
+@router.delete("/sources/{source:path}")
 async def delete_source(
     source: str,
     _key: str = Depends(enforce_rate_limit),

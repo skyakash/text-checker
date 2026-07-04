@@ -123,14 +123,14 @@ async def test_ingest_document_forwards_content_and_source() -> None:
             )
         )
         result = await mcp_server.ingest_document(
-            content="product knowledge", source="handbook", section="intro"
+            content="product knowledge", source="handbook", label="intro"
         )
 
     assert route.called
     body = route.calls.last.request.content
     assert b'"content":"product knowledge"' in body
     assert b'"source":"handbook"' in body
-    assert b'"section":"intro"' in body
+    assert b'"label":"intro"' in body
     assert result == {"source": "handbook", "chunks_indexed": 3}
 
 

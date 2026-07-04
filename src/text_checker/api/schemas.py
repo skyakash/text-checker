@@ -62,7 +62,10 @@ RAG_INGEST_MAX_BYTES = 200_000
 class RagIngestRequest(BaseModel):
     content: str = Field(min_length=1)
     source: str = Field(min_length=1, max_length=200)
-    section: str | None = None
+    # `label` is stored as the chunk's "file" metadata for provenance /
+    # debugging. Section metadata is derived from markdown headings by the
+    # chunker; this field is intentionally NOT a section override.
+    label: str | None = None
 
 
 class RagIngestResponse(BaseModel):

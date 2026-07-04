@@ -112,21 +112,24 @@ async def list_models() -> list[dict]:
 
 
 @mcp.tool()
-async def ingest_document(content: str, source: str, section: str | None = None) -> dict:
+async def ingest_document(content: str, source: str, label: str | None = None) -> dict:
     """Add a document to the shared RAG store so future corrections can use it.
 
     Args:
         content: The document text (max 200KB).
         source: Logical source name. Re-ingesting the same source replaces
                 its prior chunks — use a stable name per document.
-        section: Optional section label attached to every chunk.
+        label: Optional label stored as the chunk's file metadata (useful
+                for provenance and debugging). Section metadata is derived
+                from markdown headings automatically — this field is NOT
+                a section override.
 
     Returns {"source": <source>, "chunks_indexed": <n>}.
     """
     async with httpx.AsyncClient(timeout=120.0) as client:
         r = await client.post(
             f"{_service_url()}/v1/rag/ingest",
-            json={"content": content, "source": source, "section": section},
+            json={"content": content, "source": source, "label": label},
             headers=_headers(),
         )
         r.raise_for_status()

@@ -41,6 +41,28 @@ def _ingest_remote(client: RagHttpClient, args: argparse.Namespace) -> int:
         print("no supported files found")
         return 0
 
+    # Directory targets create one source per file ("{args.source}/{file}").
+    # Without an explicit cleanup pass, a file removed from the directory
+    # would leave its chunks in the store forever. Delete every source that
+    # matches args.source exactly or is prefixed by "{args.source}/" before
+    # re-ingesting. Single-file targets keep the endpoint's built-in replace
+    # semantics (POST /v1/rag/ingest already drops prior chunks per source).
+    if len(files) > 1:
+        try:
+            existing = client.list_sources()
+        except Exception as e:
+            print(f"error listing existing sources: {e}", file=sys.stderr)
+            return 2
+        prefix = f"{args.source}/"
+        stale = [s for s in existing if s["source"] == args.source or s["source"].startswith(prefix)]
+        for entry in stale:
+            try:
+                client.delete_source(entry["source"])
+            except Exception as e:
+                print(f"error cleaning up source '{entry['source']}': {e}", file=sys.stderr)
+                return 2
+            print(f"  cleaned up prior source: {entry['source']} ({entry['chunks']} chunks)")
+
     total = 0
     for i, f in enumerate(files):
         text = loaders.load(f)
@@ -49,7 +71,7 @@ def _ingest_remote(client: RagHttpClient, args: argparse.Namespace) -> int:
         # shows them separately and users can remove individual files.
         effective_source = args.source if len(files) == 1 else f"{args.source}/{f.name}"
         try:
-            n = client.ingest(content=text, source=effective_source, section=f.name)
+            n = client.ingest(content=text, source=effective_source, label=f.name)
         except Exception as e:
             print(f"error ingesting {f}: {e}", file=sys.stderr)
             return 2

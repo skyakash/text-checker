@@ -151,3 +151,53 @@ def test_delete_source_removes_chunks(client: TestClient) -> None:
 def test_delete_source_requires_api_key(client: TestClient) -> None:
     r = client.delete("/v1/rag/sources/anything")
     assert r.status_code == 401
+
+
+def test_delete_source_with_slash_in_name(client: TestClient) -> None:
+    # Remote directory ingest creates sources like "handbook/guide.md". The
+    # DELETE route uses `{source:path}` so slashes reach the handler intact.
+    with respx.mock(base_url="http://localhost:11434/v1") as mock:
+        _mock_embeddings(mock)
+        client.post(
+            "/v1/rag/ingest",
+            headers={"X-API-Key": "test-key"},
+            json={"content": "guide content", "source": "handbook/guide.md"},
+        )
+        # Verify it's in the sources list.
+        listed = client.get(
+            "/v1/rag/sources", headers={"X-API-Key": "test-key"}
+        ).json()
+        assert any(s["source"] == "handbook/guide.md" for s in listed)
+
+        r = client.delete(
+            "/v1/rag/sources/handbook/guide.md",
+            headers={"X-API-Key": "test-key"},
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "handbook/guide.md"
+    assert body["chunks_removed"] >= 1
+
+    # And it's gone from list.
+    listed = client.get(
+        "/v1/rag/sources", headers={"X-API-Key": "test-key"}
+    ).json()
+    assert listed == []
+
+
+def test_ingest_accepts_label_field(client: TestClient) -> None:
+    # A3 rename: field is `label`, not `section`. Section metadata comes
+    # from markdown headings via the chunker; `label` is stored as the
+    # chunk's "file" metadata for provenance.
+    with respx.mock(base_url="http://localhost:11434/v1") as mock:
+        _mock_embeddings(mock)
+        r = client.post(
+            "/v1/rag/ingest",
+            headers={"X-API-Key": "test-key"},
+            json={
+                "content": "some doc content",
+                "source": "doc-a",
+                "label": "guide.md",
+            },
+        )
+    assert r.status_code == 200

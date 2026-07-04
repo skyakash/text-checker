@@ -7,6 +7,8 @@ service process (single owner, no concurrent access).
 """
 from __future__ import annotations
 
+from urllib.parse import quote
+
 import httpx
 
 
@@ -21,10 +23,10 @@ class RagHttpClient:
     def _url(self, path: str) -> str:
         return f"{self._base_url}{path}"
 
-    def ingest(self, content: str, source: str, section: str | None = None) -> int:
+    def ingest(self, content: str, source: str, label: str | None = None) -> int:
         r = httpx.post(
             self._url("/v1/rag/ingest"),
-            json={"content": content, "source": source, "section": section},
+            json={"content": content, "source": source, "label": label},
             headers=self._headers,
             timeout=self._timeout,
         )
@@ -41,9 +43,13 @@ class RagHttpClient:
         return r.json()
 
     def delete_source(self, source: str) -> int:
+        # The route uses `{source:path}` so slashes MUST survive URL-encoding
+        # to reach the handler as-is. Everything else (spaces, %, etc.) still
+        # gets percent-encoded to keep the URL well-formed.
+        encoded = quote(source, safe="/")
         r = httpx.request(
             "DELETE",
-            self._url(f"/v1/rag/sources/{source}"),
+            self._url(f"/v1/rag/sources/{encoded}"),
             headers=self._headers,
             timeout=self._timeout,
         )
