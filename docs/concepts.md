@@ -102,7 +102,25 @@ MCP servers communicate over JSON-RPC, either via stdio (local processes) or HTT
 
 ### MCP in text-checker
 
-MCP is **not yet used** in the current implementation. The planned work exposes text-checker as an MCP server so that other tools — Claude Code, a Jira Bot, GitHub Actions — can call it without knowing anything about the HTTP API.
+text-checker ships an MCP server as of ADR-0015. It's a thin HTTP client of the running text-checker service that exposes four tools — `correct_text`, `list_modes`, `list_models`, `ingest_document` — over both stdio (for VS Code Copilot Chat and Claude Code) and streamable HTTP on port 8081 (for remote bots). The HTTP transport requires the same `X-API-Key` the main service does; if no key is configured, the server fails closed rather than silently allowing traffic.
+
+Start it locally:
+
+```bash
+# stdio (for VS Code — the client owns the process)
+text-checker-mcp
+
+# HTTP (for shared team access)
+MCP_API_KEY=my-key text-checker-mcp --http
+```
+
+Or via docker-compose profile:
+
+```bash
+docker compose --profile mcp up -d
+```
+
+See [ADR-0015](decisions/0015-mcp-server.md) for the design rationale and [Jira bot integration](integrations/jira-bot.md) for a worked webhook example.
 
 #### text-checker as an MCP hub
 

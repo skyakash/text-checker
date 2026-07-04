@@ -10,12 +10,12 @@ Complete task list for text-checker, updated as work progresses.
 
 | Status | Count |
 |---|---|
-| ✅ Done | 25 |
-| 🔵 Planned | 7 |
+| ✅ Done | 32 |
+| 🔵 Planned | 0 |
 | 🟡 Deferred | 7 |
 | ⏭ Skipped / Superseded | 2 |
 
-Detailed implementation plan for the planned items: [plan-mcp-and-integrations.md](plan-mcp-and-integrations.md)
+Implementation notes for the completed MCP/integrations batch: [plan-mcp-and-integrations.md](plan-mcp-and-integrations.md)
 
 ---
 
@@ -72,13 +72,13 @@ Implementation order and full specs: [plan-mcp-and-integrations.md](plan-mcp-and
 
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 31 | Provider-aware model routing | 🔵 Planned | `provider:model` override syntax (e.g. `anthropic:claude-haiku-4-5`); config-driven `custom` provider for any self-hosted/cloud OpenAI-compat endpoint; fixes override-always-routes-to-ollama; ADR-0016 |
-| 32 | Server-side RAG ingestion API | 🔵 Planned | POST /v1/rag/ingest, GET /v1/rag/sources, DELETE /v1/rag/sources/{source}; CLI gains `--server` mode for remote ingest; removes concurrent embedded-Chroma risk |
-| 26 | MCP server core | 🔵 Planned | FastMCP thin wrapper over HTTP API; correct_text, list_modes, list_models, ingest_document; stdio + HTTP transport; API-key auth on HTTP; depends on #31 + #32 |
-| 27 | VS Code / Copilot Chat linter integration | 🔵 Planned | .vscode/mcp.json committed to repo; verify live end-to-end; zero per-dev setup |
-| 33 | CI client CLI for pipelines | 🔵 Planned | `text-checker-check file.md --mode release-note --fail-on-flagged`; exit codes for CI; reference GitHub Actions workflow for automated release-note linting (replaces old #29 curl approach) |
-| 28 | Jira Bot integration | 🔵 Planned | Document webhook → MCP/HTTP bridge pattern in docs/integrations/jira-bot.md |
-| 30 | ADRs + docs sweep | 🔵 Planned | ADR-0015 (MCP server), ADR-0016 (model routing), index, architecture.md, README |
+| 31 | Provider-aware model routing | ✅ Done | `provider:model` override syntax (first-colon split for ollama tags); config-driven `custom` provider for any OpenAI-compat endpoint; unknown-provider returns 400; ADR-0016 |
+| 32 | Server-side RAG ingestion API | ✅ Done | POST /v1/rag/ingest, GET /v1/rag/sources, DELETE /v1/rag/sources/{source}; CLI `--server` mode for remote ingest; 200KB per-request cap |
+| 26 | MCP server core | ✅ Done | FastMCP thin wrapper over HTTP API; correct_text, list_modes, list_models, ingest_document; stdio + HTTP transports; fail-closed API-key auth on HTTP; ADR-0015 |
+| 27 | VS Code / Copilot Chat linter integration | ✅ Done | .vscode/mcp.json committed to repo; both HTTP (recommended) and stdio config shown; secret via VS Code input prompt |
+| 33 | CI client CLI for pipelines | ✅ Done | `text-checker-check` script with exit codes 0/1/2; --json + --diff outputs; reference GitHub Actions workflow at deploy/github-actions/lint-release-notes.yml |
+| 28 | Jira Bot integration | ✅ Done | docs/integrations/jira-bot.md — webhook → bot → HTTP or MCP bridge with Python example; security notes; both HTTP-API and MCP paths documented |
+| 30 | ADRs + docs sweep | ✅ Done | ADR-0015 + ADR-0016 written and indexed; concepts.md updated; README updated |
 | ~~29~~ | ~~GitHub Actions via raw curl~~ | ⏭ Superseded | Folded into #33 — the client CLI is the supported pipeline path |
 
 ---

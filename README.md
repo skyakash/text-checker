@@ -1225,6 +1225,138 @@ uv run python -m text_checker.rag remove flowstate
 uv run python -m text_checker.rag reset
 ```
 
+### Remote ingestion against a running server
+
+If the service is already running, use `--server` (or `TEXT_CHECKER_URL`) to send docs through the HTTP API rather than opening the local Chroma files. This is the recommended mode in production — Chroma stays isolated to the service process, and one operator can update the shared knowledge base from anywhere.
+
+```bash
+# via flag
+uv run python -m text_checker.rag ingest ./product-docs/handbook.md \
+  --source handbook \
+  --server http://localhost:8080 \
+  --api-key dev-key-change-me
+
+# or via env — set once, use across all subcommands
+export TEXT_CHECKER_URL=http://localhost:8080
+export TEXT_CHECKER_API_KEY=dev-key-change-me
+uv run python -m text_checker.rag ingest ./product-docs/handbook.md --source handbook
+uv run python -m text_checker.rag list
+uv run python -m text_checker.rag remove handbook
+```
+
+`ingest`, `list`, and `remove` all respect `--server`. `search` and `reset` remain local-only — `search` is a store-tuning debug tool that reads chunks directly; `reset` is destructive and never remote.
+
+## Switching models
+
+You can override the model per request with a `provider:model` prefix so the same service can drive local, self-hosted, and cloud backends:
+
+```bash
+# use a specific ollama model
+curl -X POST http://localhost:8080/v1/correct \
+  -H "X-API-Key: dev-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"their going home","mode":"grammar","model":"ollama:qwen2.5:14b-instruct"}'
+
+# route to Anthropic (requires ANTHROPIC_API_KEY set)
+curl -X POST http://localhost:8080/v1/correct \
+  -H "X-API-Key: dev-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"their going home","mode":"grammar","model":"anthropic:claude-haiku-4-5"}'
+
+# route to your self-hosted vLLM (requires CUSTOM_BASE_URL set)
+curl -X POST http://localhost:8080/v1/correct \
+  -H "X-API-Key: dev-key-change-me" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"their going home","mode":"grammar","model":"custom:llama-3.3-70b"}'
+```
+
+The prefix is split on the first colon only, so ollama's own colon-bearing model names still work. Bare model names (no known prefix) keep routing to ollama for backwards compatibility.
+
+To add a self-hosted or cloud OpenAI-compatible endpoint without code changes, set three env vars:
+
+```bash
+CUSTOM_BASE_URL=https://vllm.internal:8000/v1
+CUSTOM_API_KEY=<optional bearer token>
+CUSTOM_MODEL=llama-3.3-70b
+```
+
+Then `custom:llama-3.3-70b` becomes routable. Anything that speaks the OpenAI Chat Completions shape (vLLM, llama.cpp server, TGI, LM Studio, hosted APIs) slots in with no adapter code.
+
+Ask the running service which routes are configured:
+
+```bash
+curl -s http://localhost:8080/v1/models -H "X-API-Key: dev-key-change-me" | jq
+# [
+#   {"provider": "ollama",    "model": "qwen2.5:7b-instruct"},
+#   {"provider": "ollama",    "model": "qwen2.5:0.5b"},
+#   {"provider": "anthropic", "model": "claude-haiku-4-5"},
+#   {"provider": "custom",    "model": "llama-3.3-70b"}
+# ]
+```
+
+See [ADR-0016](docs/decisions/0016-provider-model-routing.md) for the design rationale.
+
+## Use from VS Code Copilot Chat (MCP)
+
+text-checker ships an MCP server so any MCP-aware chat panel — including GitHub Copilot Chat in VS Code and Claude Code — can call it as a tool. All pipeline guardrails (masking, hallucination guard, RAG grounding) apply to MCP consumers because the MCP server is a thin proxy of `/v1/correct` under the hood.
+
+Team setup: commit `.vscode/mcp.json` (already in the repo) and every developer picks up the connection when they open the project. The file uses VS Code's `${input:...}` prompt so each developer supplies the key locally without checking it in.
+
+Start the MCP server:
+
+```bash
+# stdio — for VS Code Copilot Chat / Claude Code (client owns the process)
+text-checker-mcp
+
+# HTTP on port 8081 — for shared team access
+MCP_API_KEY=team-shared-mcp-key text-checker-mcp --http
+
+# or via docker-compose profile
+docker compose --profile mcp up -d
+```
+
+Then in Copilot Chat, ask things like:
+
+- *"Fix the grammar in the selected text"*
+- *"Check this release note for style — call it out if the writing needs a rewrite"*
+- *"Is this PR description consistent with our writing guide?"*
+- *"Add this changelog entry to the RAG store"* (calls `ingest_document`)
+
+Copilot decides when to invoke the tool; it isn't a background linter. See [ADR-0015](docs/decisions/0015-mcp-server.md) for the MCP design and [docs/concepts.md](docs/concepts.md) for the fuller VS Code Copilot walkthrough.
+
+## Automated CI linting
+
+`text-checker-check` is a small CLI that lints text files against a running service and exits with codes CI can act on.
+
+```bash
+# clean file
+text-checker-check release-notes/2026-Q3.md --mode release-note
+# → exit 0
+
+# file with issues; fail the build so a PR can't merge until it's revised
+text-checker-check release-notes/2026-Q3.md --mode release-note --fail-on-flagged --diff
+# → exit 1 (or 0 if the note passes)
+
+# multiple files, JSON output for downstream tooling
+text-checker-check release-notes/*.md --mode release-note --json | jq
+
+# via stdin (useful from git hooks)
+git show :release-notes/2026-Q3.md | text-checker-check - --mode release-note
+```
+
+Configuration mirrors the RAG CLI:
+
+```bash
+export TEXT_CHECKER_URL=https://text-checker.internal
+export TEXT_CHECKER_API_KEY=ci-service-key
+```
+
+Exit codes: `0` clean, `1` flagged (with `--fail-on-flagged`), `2` connection or usage error.
+
+A reference GitHub Actions workflow that lints changed `release-notes/*.md` files on every PR is at [`deploy/github-actions/lint-release-notes.yml`](deploy/github-actions/lint-release-notes.yml) — copy it to `.github/workflows/` in your repo and set the two secrets.
+
+For Jira, Slack, or other bot integrations, see [docs/integrations/jira-bot.md](docs/integrations/jira-bot.md) for the webhook pattern.
+
 ## Operating the service
 
 ### Metrics

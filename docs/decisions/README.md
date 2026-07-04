@@ -53,3 +53,5 @@ Status flow: `Proposed → Accepted → Superseded by NNNN`. We don't delete sup
 | [0012](0012-glossary-rag-interaction.md) | Mask glossary terms inside RAG chunks, and canonicalize the guard's mask check | Accepted |
 | [0013](0013-redis-backed-state.md) | Redis-backed rate-limit and idempotency for multi-replica deployment | Accepted |
 | [0014](0014-single-replica-production-deployment.md) | Single-replica production deployment recipe | Accepted |
+| [0015](0015-mcp-server.md) | MCP server: thin HTTP wrapper with stdio + HTTP transports | Accepted |
+| [0016](0016-provider-model-routing.md) | Provider-aware model routing with `provider:model` syntax | Accepted |

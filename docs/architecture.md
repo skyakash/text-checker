@@ -12,13 +12,16 @@ An internal HTTP service that grammar-, style-, and clarity-corrects English tex
 flowchart TD
   subgraph Consumers
     direction LR
+    IDE["VS Code / Claude Code<br/>via MCP"]
     JIRA[Jira bot]
-    REL[Release notes]
+    CI["CI pipelines<br/>text-checker-check"]
     CLI[Internal tools]
   end
 
-  JIRA --> API
-  REL --> API
+  IDE --> MCP
+  JIRA --> MCP
+  MCP["text-checker-mcp<br/>stdio · HTTP:8081"] --> API
+  CI --> API
   CLI --> API
 
   API["API gateway<br/>auth · rate-limit · idempotency"]
@@ -152,16 +155,28 @@ Every provider speaks an OpenAI-compatible chat-completions interface. Swapping 
 | Anthropic | Cloud fallback / `quality_tier=high` | OpenAI-compatible endpoint |
 | OpenAI | Secondary cloud fallback | OpenAI-compatible |
 
-Routing policy:
+Routing policy (see ADR-0016):
 
 ```
-quality_tier=high, anthropic available → anthropic + claude-haiku-4-5
-quality_tier=high, openai only         → openai + gpt-4o-mini
-quality_tier=high, neither available   → ollama + default_model
-quality_tier=fast                      → ollama + fast_model
-quality_tier=balanced (default)        → ollama + default_model
-model override set                     → ollama + that model
+model override "provider:model"       → dispatched to that provider
+                                        (400 unknown_provider if not registered)
+model override bare "name"            → ollama + name (backwards compat)
+quality_tier=high, anthropic          → anthropic + claude-haiku-4-5
+quality_tier=high, openai only        → openai + gpt-4o-mini
+quality_tier=high, neither available  → ollama + default_model
+quality_tier=fast                     → ollama + fast_model
+quality_tier=balanced (default)       → ollama + default_model
 ```
+
+The `provider:model` prefix splits on the first colon only so ollama tags with colons work: `ollama:qwen2.5:7b-instruct` parses as `(ollama, qwen2.5:7b-instruct)`. Setting `CUSTOM_BASE_URL` registers a `custom` provider using `OpenAICompatProvider`, so vLLM, llama.cpp, TGI, and hosted OpenAI-compatible endpoints slot in without code changes.
+
+## MCP server and integration consumers
+
+The MCP server (`src/text_checker/mcp_server.py`) is a thin HTTP client of the running text-checker service. It exposes four tools — `correct_text`, `list_modes`, `list_models`, `ingest_document` — over stdio (for VS Code Copilot Chat / Claude Code) and streamable HTTP on port 8081 (for remote bots). Every tool call becomes an HTTP request against `/v1/*` on the main service. This means all guardrails, rate limits, idempotency, and metrics apply uniformly to MCP consumers, and only one process opens the Chroma store.
+
+The HTTP transport enforces `X-API-Key` via a Starlette middleware. It fails closed when no key is configured, so an operator never accidentally exposes an unauthenticated endpoint. See ADR-0015.
+
+`text-checker-check` (`src/text_checker/check.py`) is the CLI for CI pipelines. It calls `POST /v1/correct` with exit codes CI can act on (0 clean, 1 flagged when `--fail-on-flagged`, 2 usage/connection error). The reference GitHub Actions workflow at `deploy/github-actions/lint-release-notes.yml` uses it to lint changed release-note files on every PR.
 
 ## Observability
 
