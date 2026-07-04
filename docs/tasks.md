@@ -11,9 +11,11 @@ Complete task list for text-checker, updated as work progresses.
 | Status | Count |
 |---|---|
 | ✅ Done | 25 |
-| 🔵 Planned | 5 |
+| 🔵 Planned | 7 |
 | 🟡 Deferred | 7 |
-| ⏭ Skipped | 1 |
+| ⏭ Skipped / Superseded | 2 |
+
+Detailed implementation plan for the planned items: [plan-mcp-and-integrations.md](plan-mcp-and-integrations.md)
 
 ---
 
@@ -66,13 +68,18 @@ Complete task list for text-checker, updated as work progresses.
 
 ## MCP Server & integrations
 
+Implementation order and full specs: [plan-mcp-and-integrations.md](plan-mcp-and-integrations.md). Build #31 and #32 first — #26 depends on both.
+
 | # | Task | Status | Notes |
 |---|---|---|---|
-| 26 | MCP server core | 🔵 Planned | FastMCP wrapper; correct_text, list_modes, ingest_document tools; stdio + HTTP/SSE transport |
-| 27 | VS Code / Copilot Chat linter integration | 🔵 Planned | .vscode/mcp.json committed to repo; Copilot Chat calls correct_text; zero per-dev setup |
-| 28 | Jira Bot integration | 🔵 Planned | Webhook → MCP bridge; auto-correct ticket descriptions on status transition |
-| 29 | GitHub Actions CI linter | 🔵 Planned | PR description + commit message linting; fail check + post diff on warning |
-| 30 | ADR-0015 for MCP server design | 🔵 Planned | Document stdio vs HTTP transport tradeoff, tool surface, thin-wrapper decision |
+| 31 | Provider-aware model routing | 🔵 Planned | `provider:model` override syntax (e.g. `anthropic:claude-haiku-4-5`); config-driven `custom` provider for any self-hosted/cloud OpenAI-compat endpoint; fixes override-always-routes-to-ollama; ADR-0016 |
+| 32 | Server-side RAG ingestion API | 🔵 Planned | POST /v1/rag/ingest, GET /v1/rag/sources, DELETE /v1/rag/sources/{source}; CLI gains `--server` mode for remote ingest; removes concurrent embedded-Chroma risk |
+| 26 | MCP server core | 🔵 Planned | FastMCP thin wrapper over HTTP API; correct_text, list_modes, list_models, ingest_document; stdio + HTTP transport; API-key auth on HTTP; depends on #31 + #32 |
+| 27 | VS Code / Copilot Chat linter integration | 🔵 Planned | .vscode/mcp.json committed to repo; verify live end-to-end; zero per-dev setup |
+| 33 | CI client CLI for pipelines | 🔵 Planned | `text-checker-check file.md --mode release-note --fail-on-flagged`; exit codes for CI; reference GitHub Actions workflow for automated release-note linting (replaces old #29 curl approach) |
+| 28 | Jira Bot integration | 🔵 Planned | Document webhook → MCP/HTTP bridge pattern in docs/integrations/jira-bot.md |
+| 30 | ADRs + docs sweep | 🔵 Planned | ADR-0015 (MCP server), ADR-0016 (model routing), index, architecture.md, README |
+| ~~29~~ | ~~GitHub Actions via raw curl~~ | ⏭ Superseded | Folded into #33 — the client CLI is the supported pipeline path |
 
 ---
 
