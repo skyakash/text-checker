@@ -19,6 +19,12 @@ class Settings(BaseSettings):
     openai_base_url: str = "https://api.openai.com/v1"
     openai_model: str = "gpt-4o-mini"
 
+    # Generic self-hosted / cloud OpenAI-compatible provider — vLLM,
+    # llama.cpp server, TGI, LM Studio, or any hosted endpoint.
+    custom_base_url: str | None = None
+    custom_api_key: str | None = None
+    custom_model: str | None = None
+
     redis_url: str | None = None
     otel_exporter_otlp_endpoint: str | None = None
 

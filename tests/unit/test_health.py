@@ -27,10 +27,13 @@ def test_modes_lists_all_four(client: TestClient) -> None:
     assert set(r.json()) == {"grammar", "style", "jira-story", "release-note"}
 
 
-def test_models_returns_at_least_the_default(client: TestClient) -> None:
+def test_models_returns_provider_model_entries(client: TestClient) -> None:
     r = client.get("/v1/models")
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body, list)
     assert len(body) >= 1
-    assert all(isinstance(m, str) for m in body)
+    for entry in body:
+        assert set(entry.keys()) == {"provider", "model"}
+    providers = {e["provider"] for e in body}
+    assert "ollama" in providers

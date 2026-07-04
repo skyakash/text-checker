@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from ..observability.metrics import latency_seconds, requests_total
 from ..pipeline import orchestrator
 from ..pipeline.exceptions import InputTooLongError, NonEnglishInputError
-from ..providers.registry import get_registry
+from ..providers.registry import UnknownProviderError, get_registry
 from .idempotency import IdempotencyCache, get_cache, idempotency_header
 from .ratelimit import enforce_rate_limit
 from .schemas import CorrectRequest, CorrectResponse, Mode
@@ -32,6 +32,9 @@ async def correct(
     except InputTooLongError as e:
         requests_total.labels(mode=req.mode.value, model="n/a", status="rejected_size").inc()
         raise HTTPException(status_code=413, detail=str(e)) from e
+    except UnknownProviderError as e:
+        requests_total.labels(mode=req.mode.value, model="n/a", status="unknown_provider").inc()
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except httpx.HTTPError as e:
         requests_total.labels(mode=req.mode.value, model="n/a", status="upstream_error").inc()
         raise HTTPException(status_code=502, detail=f"upstream provider error: {e}") from e
@@ -53,5 +56,8 @@ async def modes() -> list[str]:
 
 
 @router.get("/models")
-async def models() -> list[str]:
-    return get_registry().available_models()
+async def models() -> list[dict[str, str]]:
+    return [
+        {"provider": provider, "model": model}
+        for provider, model in get_registry().available_models()
+    ]

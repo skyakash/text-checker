@@ -12,6 +12,28 @@ class Route:
     model: str
 
 
+class UnknownProviderError(Exception):
+    """Raised when a model override names a provider that isn't registered."""
+
+
+def parse_model_override(override: str) -> tuple[str | None, str]:
+    """Split a "provider:model" override into (provider, model).
+
+    Splits on the FIRST colon only — ollama model tags contain colons
+    (e.g. "qwen2.5:7b-instruct"), so "ollama:qwen2.5:7b-instruct" must
+    return ("ollama", "qwen2.5:7b-instruct").
+
+    A bare model with no known provider prefix returns (None, model),
+    so existing callers who pass raw ollama tags keep working.
+    """
+    if ":" not in override:
+        return None, override
+    prefix, rest = override.split(":", 1)
+    if prefix in {"ollama", "anthropic", "openai", "custom"}:
+        return prefix, rest
+    return None, override
+
+
 class ProviderRegistry:
     def __init__(self, cfg: Settings) -> None:
         self._cfg = cfg
@@ -28,6 +50,11 @@ class ProviderRegistry:
                 base_url=cfg.openai_base_url,
                 api_key=cfg.openai_api_key,
             )
+        if cfg.custom_base_url:
+            self._providers["custom"] = OpenAICompatProvider(
+                base_url=cfg.custom_base_url,
+                api_key=cfg.custom_api_key,
+            )
 
     def has(self, name: str) -> bool:
         return name in self._providers
@@ -38,17 +65,32 @@ class ProviderRegistry:
     def names(self) -> list[str]:
         return list(self._providers)
 
-    def available_models(self) -> list[str]:
-        models = [self._cfg.default_model, self._cfg.fast_model]
+    def available_models(self) -> list[tuple[str, str]]:
+        """Return (provider, model) pairs for every configured model."""
+        entries: list[tuple[str, str]] = [
+            ("ollama", self._cfg.default_model),
+            ("ollama", self._cfg.fast_model),
+        ]
         if "anthropic" in self._providers:
-            models.append(self._cfg.anthropic_model)
+            entries.append(("anthropic", self._cfg.anthropic_model))
         if "openai" in self._providers:
-            models.append(self._cfg.openai_model)
-        return models
+            entries.append(("openai", self._cfg.openai_model))
+        if "custom" in self._providers and self._cfg.custom_model:
+            entries.append(("custom", self._cfg.custom_model))
+        return entries
 
     def route(self, tier: QualityTier, model_override: str | None) -> Route:
         if model_override:
-            return Route("ollama", model_override)
+            provider, model = parse_model_override(model_override)
+            if provider is None:
+                # Bare name — preserve backwards compatibility, route to ollama.
+                return Route("ollama", model)
+            if provider not in self._providers:
+                raise UnknownProviderError(
+                    f"unknown_provider: '{provider}' is not registered. "
+                    f"Configured providers: {sorted(self._providers)}"
+                )
+            return Route(provider, model)
         if tier == QualityTier.HIGH:
             if "anthropic" in self._providers:
                 return Route("anthropic", self._cfg.anthropic_model)

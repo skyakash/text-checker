@@ -118,3 +118,64 @@ def test_correct_returns_502_when_upstream_fails(client: TestClient) -> None:
             json={"text": "their going home", "mode": "grammar"},
         )
     assert r.status_code == 502
+
+
+def test_correct_returns_400_on_unknown_provider(client: TestClient) -> None:
+    r = client.post(
+        "/v1/correct",
+        json={
+            "text": "their going home",
+            "mode": "grammar",
+            "model": "anthropic:claude-haiku-4-5",
+        },
+    )
+    assert r.status_code == 400
+    assert "unknown_provider" in r.json()["detail"]
+
+
+def test_correct_ollama_prefix_routes_to_ollama(client: TestClient) -> None:
+    with respx.mock(base_url="http://ollama.test/v1") as mock:
+        mock.post("/chat/completions").mock(
+            return_value=_mock_response("They're going home.")
+        )
+        r = client.post(
+            "/v1/correct",
+            json={
+                "text": "their going home",
+                "mode": "grammar",
+                "model": "ollama:qwen2.5:0.5b",
+            },
+        )
+    assert r.status_code == 200
+
+
+def test_correct_custom_prefix_routes_to_custom_provider(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from text_checker.config import Settings
+    from text_checker.providers import registry as registry_module
+    from text_checker.providers.registry import ProviderRegistry
+
+    reg = ProviderRegistry(
+        Settings(
+            ollama_base_url="http://ollama.test/v1",
+            custom_base_url="http://vllm.test/v1",
+            custom_api_key="sk-custom",
+            custom_model="llama-3.3-70b",
+        )
+    )
+    monkeypatch.setattr(registry_module, "_registry", reg)
+
+    with respx.mock(base_url="http://vllm.test/v1") as mock:
+        mock.post("/chat/completions").mock(
+            return_value=_mock_response("They're going home.")
+        )
+        r = client.post(
+            "/v1/correct",
+            json={
+                "text": "their going home",
+                "mode": "grammar",
+                "model": "custom:llama-3.3-70b",
+            },
+        )
+    assert r.status_code == 200
