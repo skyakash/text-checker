@@ -32,7 +32,9 @@ Editright is an internal service that corrects grammar, style, and release notes
 
 ## Where it fits
 
-![Editright ecosystem: RAG, MCP, LLM, and where the service sits](images/rag-mcp-llm-overview.png)
+![Editright: all use cases, interfaces, and full architecture on one page](images/editright-architecture.png)
+
+<sub>Deep-dive version of the concepts: [RAG / MCP / LLM overview](images/rag-mcp-llm-overview.png)</sub>
 
 | Consumer | How it connects | Typical use |
 |---|---|---|

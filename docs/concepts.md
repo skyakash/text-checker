@@ -16,7 +16,7 @@ Key constraints:
 - **No knowledge of your private docs** — it has never seen your style guide, product terminology, or internal naming conventions.
 - **Can hallucinate** — it generates plausible-sounding text even when it doesn't actually know the answer.
 
-**In text-checker:** [Ollama](https://ollama.ai) runs the model locally (default: `qwen2.5:7b`). The pipeline sends a structured prompt and the model returns corrected text. The hallucination guard and edit-ratio check exist precisely because the LLM can get things wrong.
+**In text-checker:** [Ollama](https://ollama.ai) runs the model locally (default: `qwen2.5:7b-instruct`). The pipeline sends a structured prompt and the model returns corrected text. The hallucination guard and edit-ratio check exist precisely because the LLM can get things wrong.
 
 ---
 
@@ -27,11 +27,12 @@ Key constraints:
 ### Phase 1 — Ingest (offline, one-time or periodic)
 
 ```
-Your docs (PDFs, markdown, plain text)
+Your docs (PDFs, markdown, HTML, plain text)
    ↓
-Split into overlapping chunks (~500 tokens each)
+Split into overlapping chunks (up to ~1500 chars, 200-char overlap, section-aware)
    ↓
-Each chunk → embedding model → vector (list of ~1536 numbers capturing meaning)
+Each chunk → embedding model → vector (hundreds of numbers capturing meaning;
+                                        768 dims for nomic-embed-text)
    ↓
 Stored in a vector database (Chroma in text-checker, at ./data/rag/)
 ```
@@ -39,7 +40,12 @@ Stored in a vector database (Chroma in text-checker, at ./data/rag/)
 This is called **ingestion** (also called indexing or training the RAG). You run it once when your docs change.
 
 ```bash
-python -m text_checker.rag.cli ingest path/to/your/docs/
+# local store (dev)
+python -m text_checker.rag ingest path/to/your/docs/ --source product-docs
+
+# against a running server (production — see README "Remote ingestion")
+python -m text_checker.rag ingest path/to/your/docs/ --source product-docs \
+  --server http://localhost:8080 --api-key <key>
 ```
 
 ### Phase 2 — Retrieve + Augment (per request, automatic)
@@ -67,7 +73,7 @@ The LLM never sees your whole document library — only the 3–5 chunks most re
 | Cost | Cheap — just a vector search | Expensive GPU compute |
 | Best for | Factual grounding, up-to-date knowledge | Changing the model's style or behavior |
 
-**In text-checker:** RAG is active for `release-note` and `style` modes (skipped for `grammar` — grammar is language-universal, no product context needed). The retrieved chunks ground the model in your product's specific terminology, so it doesn't invent names or rewrite technical terms.
+**In text-checker:** RAG is active for `style`, `jira-story`, and `release-note` modes (skipped for `grammar` by default — grammar is language-universal, no product context needed; the skip list is configurable via `RAG_SKIP_MODES`). The retrieved chunks ground the model in your product's specific terminology, so it doesn't invent names or rewrite technical terms.
 
 Relevance is measured by a similarity score (0–1). Only chunks scoring above `RAG_MIN_SCORE` (default `0.50`) are injected. You can tune this threshold based on the `rag_retrieval_score` Prometheus histogram.
 
@@ -127,21 +133,23 @@ See [ADR-0015](decisions/0015-mcp-server.md) for the design rationale and [Jira 
 #### text-checker as an MCP hub
 
 ```
-                        ┌─────────────────────────────────┐
-                        │     text-checker MCP server      │
-                        │                                  │
-   Claude Code ─stdio──▶│  correct_text(text, mode)       │
-                        │  list_modes()                    │──▶ /v1/correct (HTTP)
-   Jira Bot ───HTTP────▶│  ingest_document(content, src)  │
-                        │                                  │──▶ RAG ingest pipeline
-   GitHub Action ─HTTP─▶│                                  │
-                        └─────────────────────────────────┘
-                                      │
-                              All guardrails apply:
-                              mask → RAG → LLM → guard
+                            ┌──────────────────────────────────┐
+                            │      text-checker MCP server     │
+                            │                                  │
+   VS Code Copilot ─stdio──▶│  correct_text(text, mode, model) │──▶ POST /v1/correct
+   Claude Code ─────stdio──▶│  list_modes()                    │──▶ GET  /v1/modes
+                            │  list_models()                   │──▶ GET  /v1/models
+   Jira Bot ──HTTP:8081────▶│  ingest_document(content, src)   │──▶ POST /v1/rag/ingest
+                            └──────────────────────────────────┘
+                                          │
+                                  All guardrails apply:
+                                  mask → RAG → LLM → guard
+
+   GitHub Actions / CI ──── text-checker-check CLI ──▶ POST /v1/correct  (no MCP —
+                                                        plain HTTP, exit codes for CI)
 ```
 
-The MCP server is a thin wrapper over the existing HTTP API. All pipeline guardrails — masking, hallucination guard, edit-ratio — run as normal. MCP just provides the standard plug.
+The MCP server is a thin wrapper over the existing HTTP API. All pipeline guardrails — masking, hallucination guard, edit-ratio — run as normal. MCP just provides the standard plug. CI pipelines skip MCP entirely and use the `text-checker-check` CLI against the REST API — MCP adds nothing for a non-LLM caller.
 
 #### Integration scenario 1 — Claude Code / IDE linter
 
@@ -155,17 +163,20 @@ Claude Code (MCP client)
 text-checker MCP server (stdio)
         ↓  POST /v1/correct
 text-checker pipeline (mask → RAG → LLM → guard)
-        ↓  { corrected, changes, warning }
+        ↓  { corrected_text, diff, flagged }
 Claude Code shows inline diff
 ```
 
-Config: one entry in `.claude/settings.json`:
+Config: one entry in `.claude/settings.json` (the MCP server is configured via env vars, not flags):
 ```json
 {
   "mcpServers": {
     "text-checker": {
       "command": "text-checker-mcp",
-      "args": ["--api-url", "http://localhost:8080"]
+      "env": {
+        "TEXT_CHECKER_URL": "http://localhost:8080",
+        "TEXT_CHECKER_API_KEY": "<your-key>"
+      }
     }
   }
 }
@@ -182,7 +193,7 @@ Jira Bot (Python / Node)
         ↓  MCP tool call: correct_text(ticket.description, "release-note")
 text-checker MCP server (HTTP transport)
         ↓  pipeline runs
-        ↓  { corrected, changes }
+        ↓  { corrected_text, diff, flagged }
 Jira Bot → POST comment with corrected text
         or → PATCH ticket description
 ```
@@ -191,37 +202,38 @@ Value: release notes are consistent and style-guide-compliant before they ever r
 
 #### Integration scenario 3 — GitHub Actions CI linter
 
-On every pull request, a GitHub Actions workflow calls text-checker to lint the PR description and commit messages. If the service returns `warning: true`, the check fails and the diff is posted as a review comment.
+On every pull request, a GitHub Actions workflow lints changed release-note files with the `text-checker-check` CLI. If the hallucination guard flags a file and `--fail-on-flagged` is set, the check fails and blocks the merge.
 
 ```
-PR opened / updated
+PR opened / updated (release-notes/**.md changed)
         ↓  trigger: pull_request
 GitHub Actions runner
-        ↓  curl POST /v1/correct  { text: pr.body, mode: "style" }
-text-checker HTTP API
-        ↓  { corrected, changes, warning }
-        if warning → gh pr review --comment (posts diff)
-        if warning → exit 1 (blocks merge)
+        ↓  text-checker-check <file> --mode release-note --fail-on-flagged --diff
+text-checker HTTP API  (POST /v1/correct)
+        ↓  { corrected_text, diff, flagged }
+        if flagged → exit 1 (check fails, blocks merge)
+        else       → exit 0
 ```
 
-This integration uses the HTTP API directly (no MCP client needed) since Actions runners are ephemeral and stdio transport is impractical there.
+This integration uses the HTTP API directly (no MCP client needed) since Actions runners are ephemeral and there's no LLM in the loop to discover tools. The reference workflow lives at [`deploy/github-actions/lint-release-notes.yml`](../deploy/github-actions/lint-release-notes.yml).
 
 #### Transport: stdio vs HTTP
 
 | Transport | Use case | How to run |
 |---|---|---|
-| **stdio** | Claude Code, local IDE plugins | `text-checker-mcp` (process started by the MCP client) |
-| **HTTP (SSE)** | Jira Bot, remote agents, multi-user | `uvicorn text_checker.mcp_server:app --port 8081` |
+| **stdio** | VS Code Copilot Chat, Claude Code, local IDE plugins | `text-checker-mcp` (process started by the MCP client; config via `TEXT_CHECKER_URL` / `TEXT_CHECKER_API_KEY` env) |
+| **Streamable HTTP** | Jira Bot, remote agents, multi-user (port 8081) | `MCP_API_KEY=<key> text-checker-mcp --http` — requires `X-API-Key`, fails closed without a configured key |
 
 #### Tools exposed
 
 | Tool | Inputs | Returns |
 |---|---|---|
-| `correct_text` | `text: str`, `mode: str` | `corrected`, `changes[]`, `warning` |
-| `list_modes` | — | `[{name, description, rag_enabled}]` |
-| `ingest_document` | `content: str`, `source: str` | `chunks_indexed: int` |
+| `correct_text` | `text: str`, `mode: str`, `model: str \| None` | full `/v1/correct` response: `corrected_text`, `diff[]`, `flagged`, `flag_reason`, `rag_context_used[]`, `metrics` |
+| `list_modes` | — | `["grammar", "style", "jira-story", "release-note"]` |
+| `list_models` | — | `[{provider, model}]` — round-trip any entry back as `provider:model` in `correct_text` |
+| `ingest_document` | `content: str`, `source: str`, `section: str \| None` | `{source, chunks_indexed}` |
 
-`ingest_document` lets a Jira Bot or CI step push new product docs into the RAG store at runtime — no manual CLI step required.
+`ingest_document` lets a Jira Bot or a developer in chat push new product docs into the shared RAG store at runtime — no shell access to the server required.
 
 ---
 
@@ -256,7 +268,7 @@ text-checker MCP server (HTTP/SSE, shared team instance)
          ↓
 Full pipeline: mask → RAG retrieve → LLM → unmask → hallucination guard
          ↓
-{ corrected, changes: [...], warning: false }
+{ corrected_text, diff: [...], flagged: false }
          ↓
 Copilot presents corrected text + diff in the chat panel
 ```
@@ -266,16 +278,27 @@ Copilot presents corrected text + diff in the chat panel
 Commit a single file to the repo and every team member gets the MCP connection automatically when they open the project in VS Code (requires VS Code 1.99+ and GitHub Copilot extension):
 
 ```json
-// .vscode/mcp.json  ← commit this to the repo
+// .vscode/mcp.json  ← commit this to the repo (the real file is already in this repo)
 {
   "servers": {
     "text-checker": {
       "type": "http",
-      "url": "http://your-shared-server:8081/mcp"
+      "url": "http://your-shared-server:8081/mcp",
+      "headers": { "X-API-Key": "${input:textCheckerMcpKey}" }
     }
-  }
+  },
+  "inputs": [
+    {
+      "id": "textCheckerMcpKey",
+      "type": "promptString",
+      "description": "text-checker MCP API key",
+      "password": true
+    }
+  ]
 }
 ```
+
+The `X-API-Key` header is required — the MCP HTTP transport rejects unauthenticated requests (and fails closed if the server itself has no key configured). The `${input:...}` prompt means each developer supplies the key locally; it is never committed.
 
 The text-checker service runs on a shared host (same machine as today, or a team server). All team members' Copilot instances point to the same MCP server, which means they all share the same RAG knowledge base — update the product docs once, every developer benefits immediately.
 
@@ -299,6 +322,7 @@ The text-checker service runs on a shared host (same machine as today, or a team
          │   text-checker MCP server   │
          │   correct_text(text, mode)  │
          │   list_modes()              │
+         │   list_models()             │
          │   ingest_document(content)  │
          └──────────────┬──────────────┘
                         │
@@ -377,13 +401,13 @@ If you want automatic on-save linting (like ESLint), that requires a separate VS
 
 Start with MCP — it covers the high-value cases (release notes, PR descriptions, commit messages) with minimal build effort.
 
-### What gets built (tasks #26 and #27)
+### What shipped (tasks #26 and #27 — done)
 
 **#26 — MCP server core** (`src/text_checker/mcp_server.py`)
-Thin FastMCP wrapper over the existing HTTP API. Exposes `correct_text`, `list_modes`, `ingest_document`. Runs as a separate process on the same host, HTTP/SSE transport on port 8081.
+Thin FastMCP wrapper over the existing HTTP API. Exposes `correct_text`, `list_modes`, `list_models`, `ingest_document`. Runs as a separate process, stdio by default or streamable HTTP on port 8081 (`--http`), with fail-closed `X-API-Key` auth. See ADR-0015.
 
 **#27 — VS Code integration**
-`.vscode/mcp.json` committed to repo, usage examples in README, end-to-end test with Copilot Chat.
+`.vscode/mcp.json` committed to this repo; usage examples in the README ("Use from VS Code Copilot Chat").
 
 ---
 
@@ -411,7 +435,7 @@ POST /v1/correct
 
 - **LLM** does the reasoning and text generation (step 3).
 - **RAG** provides the product-specific context that makes the LLM's output accurate for your domain (step 2).
-- **MCP** is the future integration layer that will let other Claude-based tools call text-checker as a first-class tool (not yet implemented).
+- **MCP** is the integration layer (shipped — ADR-0015) that lets MCP clients like VS Code Copilot Chat and Claude Code call text-checker as a first-class tool. text-checker implements the server side only; the pipeline itself never calls out to MCP tools.
 
 The masking, hallucination guard, and edit-ratio thresholds are text-checker's own guardrails — the pipeline-level safety layer that protects against the LLM's inherent tendency to hallucinate or over-edit.
 
