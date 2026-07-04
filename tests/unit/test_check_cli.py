@@ -169,6 +169,17 @@ def test_model_override_forwarded(sample_file: Path) -> None:
     assert b'"model":"anthropic:claude-haiku-4-5"' in body
 
 
+def test_multiple_stdin_targets_rejected(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Stdin can only be read once — accepting multiple '-' would silently
+    # lint empty strings after the first.
+    code = check_main(["-", "-", "--mode", "grammar"])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "stdin" in err.lower() or "'-'" in err
+
+
 def test_flag_takes_precedence_over_env(
     sample_file: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

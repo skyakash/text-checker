@@ -17,6 +17,7 @@ requests are rejected before they reach any tool handler.
 from __future__ import annotations
 
 import argparse
+import hmac
 import os
 import sys
 
@@ -24,8 +25,8 @@ import httpx
 from mcp.server.fastmcp import FastMCP
 
 DEFAULT_API_URL = "http://localhost:8080"
-MCP_HTTP_HOST = "0.0.0.0"
-MCP_HTTP_PORT = 8081
+DEFAULT_MCP_HTTP_HOST = "0.0.0.0"
+DEFAULT_MCP_HTTP_PORT = 8081
 
 
 def _service_url() -> str:
@@ -39,6 +40,19 @@ def _service_key() -> str | None:
 def _headers() -> dict[str, str]:
     key = _service_key()
     return {"X-API-Key": key} if key else {}
+
+
+# One AsyncClient shared across all tool calls avoids re-establishing a
+# fresh connection pool per request. The MCP server is a long-lived
+# process — the client's lifecycle is the process lifecycle.
+_http_client: httpx.AsyncClient | None = None
+
+
+def _client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=120.0)
+    return _http_client
 
 
 def _mcp_expected_key() -> str | None:
@@ -81,20 +95,23 @@ async def correct_text(text: str, mode: str = "grammar", model: str | None = Non
     payload: dict[str, object] = {"text": text, "mode": mode}
     if model:
         payload["model"] = model
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        r = await client.post(
-            f"{_service_url()}/v1/correct", json=payload, headers=_headers()
-        )
-        r.raise_for_status()
+    r = await _client().post(
+        f"{_service_url()}/v1/correct",
+        json=payload,
+        headers=_headers(),
+        timeout=90.0,
+    )
+    r.raise_for_status()
     return r.json()
 
 
 @mcp.tool()
 async def list_modes() -> list[str]:
     """List available correction modes."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{_service_url()}/v1/modes", headers=_headers())
-        r.raise_for_status()
+    r = await _client().get(
+        f"{_service_url()}/v1/modes", headers=_headers(), timeout=10.0
+    )
+    r.raise_for_status()
     return r.json()
 
 
@@ -105,9 +122,10 @@ async def list_models() -> list[dict]:
     Returns entries like {"provider": "ollama", "model": "qwen2.5:7b-instruct"}.
     Use "provider:model" as the model argument to correct_text to route.
     """
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.get(f"{_service_url()}/v1/models", headers=_headers())
-        r.raise_for_status()
+    r = await _client().get(
+        f"{_service_url()}/v1/models", headers=_headers(), timeout=10.0
+    )
+    r.raise_for_status()
     return r.json()
 
 
@@ -126,13 +144,13 @@ async def ingest_document(content: str, source: str, label: str | None = None) -
 
     Returns {"source": <source>, "chunks_indexed": <n>}.
     """
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        r = await client.post(
-            f"{_service_url()}/v1/rag/ingest",
-            json={"content": content, "source": source, "label": label},
-            headers=_headers(),
-        )
-        r.raise_for_status()
+    r = await _client().post(
+        f"{_service_url()}/v1/rag/ingest",
+        json={"content": content, "source": source, "label": label},
+        headers=_headers(),
+        timeout=120.0,
+    )
+    r.raise_for_status()
     return r.json()
 
 
@@ -166,8 +184,10 @@ def _build_http_app():  # pragma: no cover - thin ASGI wiring
                     {"error": "MCP HTTP server has no API key configured; set MCP_API_KEY or TEXT_CHECKER_API_KEY"},
                     status_code=500,
                 )
-            provided = request.headers.get("X-API-Key")
-            if provided != expected:
+            provided = request.headers.get("X-API-Key", "")
+            # Constant-time comparison to avoid a timing side-channel that
+            # could let a probing attacker recover the key byte by byte.
+            if not hmac.compare_digest(provided, expected):
                 return JSONResponse(
                     {"error": "invalid or missing X-API-Key"}, status_code=401
                 )
@@ -188,8 +208,10 @@ def _build_http_app():  # pragma: no cover - thin ASGI wiring
 def _run_http() -> None:  # pragma: no cover
     import uvicorn
 
+    host = os.environ.get("MCP_HOST", DEFAULT_MCP_HTTP_HOST)
+    port = int(os.environ.get("MCP_PORT", str(DEFAULT_MCP_HTTP_PORT)))
     app = _build_http_app()
-    uvicorn.run(app, host=MCP_HTTP_HOST, port=MCP_HTTP_PORT, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 def main() -> int:

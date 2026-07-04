@@ -1315,6 +1315,10 @@ text-checker-mcp
 # HTTP on port 8081 — for shared team access
 MCP_API_KEY=team-shared-mcp-key text-checker-mcp --http
 
+# override the default bind (0.0.0.0:8081) if you need to restrict
+# to loopback or move to a different port
+MCP_HOST=127.0.0.1 MCP_PORT=9091 MCP_API_KEY=... text-checker-mcp --http
+
 # or via docker-compose profile
 docker compose --profile mcp up -d
 ```

@@ -104,6 +104,14 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    # Stdin can only be read once. Passing '-' multiple times means the
+    # second read gets an empty string, which is confusing at best and
+    # a silent data corruption at worst — every subsequent target would
+    # lint an empty file. Reject early with a clear message.
+    if args.targets.count("-") > 1:
+        print("error: '-' (stdin) may only appear once in targets", file=sys.stderr)
+        return EXIT_ERROR
+
     base_url = args.server or os.environ.get("TEXT_CHECKER_URL") or DEFAULT_URL
     api_key = args.api_key or os.environ.get("TEXT_CHECKER_API_KEY")
 
