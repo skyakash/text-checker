@@ -1,0 +1,59 @@
+# Reference GitHub Actions workflow: lint release-note files against a
+# running text-checker service on every PR.
+#
+# Copy this file to `.github/workflows/lint-release-notes.yml` in your
+# repository. Add two secrets in your GitHub repository settings:
+#   TEXT_CHECKER_URL      base URL of your text-checker deployment
+#   TEXT_CHECKER_API_KEY  API key configured on the service
+#
+# The workflow only runs when files under release-notes/ change so it
+# doesn't burden every PR. Adjust the paths filter to fit your layout.
+
+name: Lint release notes
+
+on:
+  pull_request:
+    paths:
+      - "release-notes/**.md"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # needed for the diff below
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install text-checker-check CLI
+        # Pin to a released version in production. HEAD is fine for a demo.
+        run: pip install "git+https://github.com/skyakash/text-checker.git@main"
+
+      - name: Find changed release-note files
+        id: files
+        run: |
+          {
+            echo "changed<<EOF"
+            git diff --name-only --diff-filter=AM origin/${{ github.base_ref }}...HEAD -- 'release-notes/**.md' || true
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Lint each changed file
+        if: steps.files.outputs.changed != ''
+        env:
+          TEXT_CHECKER_URL: ${{ secrets.TEXT_CHECKER_URL }}
+          TEXT_CHECKER_API_KEY: ${{ secrets.TEXT_CHECKER_API_KEY }}
+        run: |
+          # --fail-on-flagged means: if the hallucination guard or edit-ratio
+          # rejects a note, the check fails and the PR can't merge until the
+          # note is revised. Drop the flag to make this advisory-only.
+          echo "${{ steps.files.outputs.changed }}" | tr ' ' '\n' | while read -r f; do
+            [ -z "$f" ] && continue
+            echo "::group::text-checker-check $f"
+            text-checker-check "$f" --mode release-note --fail-on-flagged --diff
+            echo "::endgroup::"
+          done
