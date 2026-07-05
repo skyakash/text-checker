@@ -6,8 +6,15 @@ services:
         HTTP_PROXY: ${HTTP_PROXY:-}
         HTTPS_PROXY: ${HTTPS_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
-    ports: ["8080:8080"]
+    # Both sides of the port map honor SERVICE_PORT so the host publish
+    # port matches the container bind by default. SERVICE_PUBLISH_PORT
+    # remaps only the host side (e.g. bind on 8080 in the container but
+    # publish on 9080 to the LAN — useful when 8080 is taken).
+    ports:
+      - "${SERVICE_PUBLISH_PORT:-${SERVICE_PORT:-8080}}:${SERVICE_PORT:-8080}"
     environment:
+      SERVICE_HOST: ${SERVICE_HOST:-0.0.0.0}
+      SERVICE_PORT: ${SERVICE_PORT:-8080}
       OLLAMA_BASE_URL: http://ollama:11434/v1
       DEFAULT_MODEL: qwen2.5:0.5b
       API_KEYS: dev-key-change-me
@@ -65,9 +72,15 @@ services:
         HTTPS_PROXY: ${HTTPS_PROXY:-}
         NO_PROXY: ${NO_PROXY:-}
     command: ["text-checker-mcp", "--http"]
-    ports: ["8081:8081"]
+    # MCP_PORT already env-configurable (mcp_server.py); publish port
+    # tracks it. SERVICE_PORT feeds the internal URL to the main service
+    # so a moved service port doesn't break the MCP -> service hop.
+    ports:
+      - "${MCP_PUBLISH_PORT:-${MCP_PORT:-8081}}:${MCP_PORT:-8081}"
     environment:
-      TEXT_CHECKER_URL: http://service:8080
+      MCP_HOST: ${MCP_HOST:-0.0.0.0}
+      MCP_PORT: ${MCP_PORT:-8081}
+      TEXT_CHECKER_URL: http://service:${SERVICE_PORT:-8080}
       TEXT_CHECKER_API_KEY: dev-key-change-me
       MCP_API_KEY: ${MCP_API_KEY:-dev-key-change-me}
     depends_on:

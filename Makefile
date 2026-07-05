@@ -1,10 +1,16 @@
 .PHONY: install dev test lint fmt typecheck up down build clean
 
+# Bind can be overridden per environment — set SERVICE_HOST and SERVICE_PORT
+# in the shell or a .env file before `make dev`. Matches the MCP server's
+# MCP_HOST / MCP_PORT convention (mcp_server.py).
+SERVICE_HOST ?= 0.0.0.0
+SERVICE_PORT ?= 8080
+
 install:
 	uv sync --all-extras --group dev
 
 dev:
-	uv run uvicorn text_checker.main:app --reload --host 0.0.0.0 --port 8080
+	uv run uvicorn text_checker.main:app --reload --host $(SERVICE_HOST) --port $(SERVICE_PORT)
 
 test:
 	uv run pytest

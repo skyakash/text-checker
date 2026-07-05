@@ -20,10 +20,16 @@ Requires=ollama.service
 [Service]
 Type=simple
 WorkingDirectory=/opt/text-checker
+# Provide SERVICE_HOST / SERVICE_PORT in .env.prod to change the bind
+# without editing this unit file. Defaults (0.0.0.0 / 8080) are baked
+# into the Environment= lines below so a missing .env.prod entry still
+# starts the service.
+Environment=SERVICE_HOST=0.0.0.0
+Environment=SERVICE_PORT=8080
 EnvironmentFile=/opt/text-checker/.env.prod
 ExecStart=/usr/local/bin/uv run uvicorn text_checker.main:app \
-    --host 0.0.0.0 \
-    --port 8080 \
+    --host ${SERVICE_HOST} \
+    --port ${SERVICE_PORT} \
     --workers 1 \
     --log-level warning
 Restart=on-failure

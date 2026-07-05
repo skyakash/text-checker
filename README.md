@@ -444,6 +444,62 @@ sudo systemctl restart ollama
 
 Pulled models live in `/usr/share/ollama/.ollama/` (not `~/.ollama` like macOS).
 
+## Restricted environments / custom ports
+
+If you can't use the default ports (8080 for the main API, 8081 for the MCP server) — because they're taken, firewall policy pins specific ports, or you need to bind to a single interface rather than all — every bind is controlled by env vars. No code changes, no Dockerfile edits.
+
+### Env vars
+
+| Var | Default | Effect |
+|---|---|---|
+| `SERVICE_HOST` | `0.0.0.0` | Uvicorn bind address for the main API. Use `127.0.0.1` for loopback-only, or a specific NIC address to restrict which interface accepts traffic. |
+| `SERVICE_PORT` | `8080` | Uvicorn port for the main API. Compose passes this into the container **and** onto both sides of the host:container port map, so a single change moves everything. |
+| `SERVICE_PUBLISH_PORT` | `SERVICE_PORT` | Host-side publish port when it needs to differ from the container bind (e.g. bind to 8080 inside, publish on 9080 outside because 8080 is taken on the host). Compose only. |
+| `MCP_HOST` | `0.0.0.0` | Bind for the MCP HTTP server. |
+| `MCP_PORT` | `8081` | Port for the MCP HTTP server. Compose also propagates this into `TEXT_CHECKER_URL` for the MCP → main hop. |
+| `MCP_PUBLISH_PORT` | `MCP_PORT` | Host-side publish port for MCP (compose only). |
+
+### Recipes
+
+**Move the main API to port 9080 (compose):**
+```bash
+SERVICE_PORT=9080 docker compose up -d
+# healthz:  http://localhost:9080/healthz
+```
+
+**Bind main API to loopback only, publish externally on a different port:**
+```bash
+# Container listens on 0.0.0.0:8080 (compose default); host publishes on 9080.
+SERVICE_PUBLISH_PORT=9080 docker compose up -d
+```
+
+**Bare-metal (make dev):**
+```bash
+SERVICE_HOST=127.0.0.1 SERVICE_PORT=9080 make dev
+```
+
+**Bare-metal (systemd):** put the values in `/opt/text-checker/.env.prod`:
+```bash
+SERVICE_HOST=127.0.0.1
+SERVICE_PORT=9080
+```
+Then `sudo systemctl restart text-checker`.
+
+**Run the MCP server on a non-default port with loopback binding:**
+```bash
+MCP_HOST=127.0.0.1 MCP_PORT=9091 MCP_API_KEY=... text-checker-mcp --http
+```
+
+### Client-side implications
+
+Every callable client honors the same knobs, so nothing else needs to change:
+- `text-checker-check --server http://localhost:9080` (or `TEXT_CHECKER_URL` env)
+- RAG CLI `--server http://localhost:9080` (or `TEXT_CHECKER_URL` env)
+- MCP server calling the main API: `TEXT_CHECKER_URL=http://service:${SERVICE_PORT}` (compose sets this automatically)
+- `.vscode/mcp.json` uses whatever URL you point it at
+
+If you run the service inside a container network on the default 8080 but publish externally on a different port, keep `TEXT_CHECKER_URL` pointing at the **internal** port for MCP → service traffic — MCP is on the same compose network.
+
 ## Running behind a corporate proxy
 
 The service uses `httpx` for all outbound calls, and `httpx` reads `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the environment automatically. **No Python code changes are needed** — just set the env vars correctly across every layer.
