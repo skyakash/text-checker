@@ -1,5 +1,7 @@
 # Architecture
 
+> Read this if you want to modify or extend text-checker. Deep dive on design rationale, trade-offs, and the honest list of known limitations.
+
 This document is the deep-dive on design rationale, trade-offs, and the roadmap. For setup, API reference, and operating instructions see the [README](../README.md).
 
 ## Goal

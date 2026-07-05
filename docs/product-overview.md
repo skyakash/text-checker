@@ -1,5 +1,7 @@
 # Editright
 
+> Read this if you want the pitch, not the shell commands. One-page product overview aimed at stakeholders and demos.
+
 **Product-grounded, guardrailed text correction for engineering teams — in every tool your team already uses.**
 
 <sub>Editright is the product name. The runtime, package, and CLIs still ship as `text-checker` / `text-checker-mcp` / `text-checker-check`.</sub>

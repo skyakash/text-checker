@@ -1,5 +1,7 @@
 # text-checker
 
+> Read this if you want to run the tool. Setup, prerequisites, API reference, and worked examples with real captured output.
+
 An internal HTTP service that grammar-, style-, and clarity-corrects English text on behalf of other internal tools. One API, swappable LLM backends, observable, grounded with your product knowledge.
 
 ---

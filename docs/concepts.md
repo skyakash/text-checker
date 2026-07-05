@@ -1,5 +1,7 @@
 # Concepts: LLM, RAG, and MCP
 
+> Read this if you want to understand the ideas behind text-checker — what LLMs, RAG, and MCP are, and how they fit together. No setup, no code paths.
+
 A short reference for the three foundational concepts behind text-checker — what each one is, why it exists, and how they fit together in this project.
 
 ![RAG, MCP and LLM overview](images/rag-mcp-llm-overview.png)
