@@ -12,16 +12,20 @@ An internal HTTP service that grammar-, style-, and clarity-corrects English tex
 - [Prerequisites](#prerequisites)
 - [Setup and first run](#setup-and-first-run)
 - [Quick start: full stack walkthrough](#quick-start-full-stack-walkthrough)
-- [Running in production (single replica)](#running-in-production-single-replica)
-- [Running on Linux / RHEL](#running-on-linux--rhel)
-- [Running behind a corporate proxy](#running-behind-a-corporate-proxy)
 - [Configuration](#configuration)
 - [API reference](#api-reference)
 - [Worked examples](#worked-examples)
 - [Modes](#modes)
 - [Glossary (protected terms)](#glossary-protected-terms)
 - [RAG over product docs](#rag-over-product-docs)
+- [Switching models](#switching-models)
+- [Use from VS Code Copilot Chat (MCP)](#use-from-vs-code-copilot-chat-mcp)
+- [Automated CI linting](#automated-ci-linting)
 - [Operating the service](#operating-the-service)
+- [Running in production (single replica)](#running-in-production-single-replica)
+- [Running on Linux / RHEL](#running-on-linux--rhel)
+- [Running behind a corporate proxy](#running-behind-a-corporate-proxy)
+- [Restricted environments / custom ports](#restricted-environments--custom-ports)
 - [Testing](#testing)
 - [Development workflow](#development-workflow)
 - [Project layout](#project-layout)
@@ -318,293 +322,6 @@ uv run python -m text_checker.glossary add "Workspace"
 ```
 
 Both stores persist under `./data/` (gitignored). Back up the directory to back up your knowledge base.
-
-## Running in production (single replica)
-
-Two paths: Docker Compose (recommended) or bare-metal systemd (for RHEL without Docker). See [ADR-0014](docs/decisions/0014-single-replica-production-deployment.md) for the design rationale.
-
-### Docker Compose path
-
-```bash
-# 1. Copy and fill in secrets
-cp .env.prod.example .env.prod
-$EDITOR .env.prod   # set API_KEYS, model name, proxy if needed
-
-# 2. Build the image once
-docker build -t text-checker:latest .
-
-# 3. Pull Ollama models inside the container
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d ollama
-docker compose exec ollama ollama pull qwen2.5:7b-instruct
-docker compose exec ollama ollama pull nomic-embed-text
-
-# 4. Start everything
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
-
-# 5. Verify
-curl -s http://localhost:8080/readyz | jq
-# expect: {"status":"ready","components":{"provider:ollama":"ok","redis":"ok"}}
-```
-
-Services restart automatically on crash or reboot (`restart: unless-stopped`). The `./data/` directory (glossary + RAG vector store) is bind-mounted so it survives container rebuilds.
-
-### Bare-metal systemd path (RHEL / Ubuntu)
-
-```bash
-# 1. Create a dedicated user
-sudo useradd -r -s /sbin/nologin text-checker
-
-# 2. Clone to /opt and install deps
-sudo git clone https://github.com/skyakash/text-checker.git /opt/text-checker
-cd /opt/text-checker && sudo uv sync --no-dev
-sudo cp .env.prod.example .env.prod && sudo $EDITOR .env.prod
-
-# 3. Install and start the systemd unit
-sudo cp deploy/text-checker.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now text-checker
-
-# 4. Install log rotation
-sudo cp deploy/logrotate.conf /etc/logrotate.d/text-checker
-```
-
-### Backup and restore
-
-```bash
-# Backup (./data/ → timestamped tarball; old backups auto-pruned after 30 days)
-./scripts/backup.sh
-
-# Restore
-tar -xzf backups/text-checker-data-2026-06-25T10-30-00.tar.gz
-```
-
-### Updating
-
-```bash
-# For Docker Compose: backs up, pulls code, rebuilds image, restarts, polls /readyz
-./scripts/update.sh
-
-# For bare-metal systemd:
-cd /opt/text-checker
-sudo git pull --ff-only
-sudo uv sync --no-dev
-sudo systemctl restart text-checker
-```
-
-## Running on Linux / RHEL
-
-Same `make install` / `make dev` workflow as macOS. Platform-specific notes only.
-
-### Bare-metal install on RHEL 9
-
-```bash
-# Optional: build deps for any wheels that need compilation.
-# Most wheels (chromadb, lxml, pdfplumber) ship binary; this is only needed
-# in restricted environments.
-sudo dnf install -y gcc python3.12-devel
-
-# uv + ollama
-curl -LsSf https://astral.sh/uv/install.sh | sh
-curl -fsSL https://ollama.com/install.sh | sh   # registers ollama as a systemd service
-
-# clone, install, run
-git clone https://github.com/skyakash/text-checker.git
-cd text-checker
-make install
-make dev
-```
-
-### Open the firewall
-
-```bash
-sudo firewall-cmd --add-port=8080/tcp --permanent
-sudo firewall-cmd --reload
-```
-
-### SELinux and Docker bind-mounts
-
-If you bind-mount `./data/` into the container for persistence (instead of using a named volume), SELinux will block the container from reading or writing it. Append `:Z` to the mount so Docker relabels it:
-
-```yaml
-volumes:
-  - ./data:/app/data:Z
-```
-
-Named volumes (the compose file's default for Ollama) don't have this problem.
-
-### Managing Ollama under systemd
-
-The Linux installer registers Ollama as a unit. Useful commands:
-
-```bash
-sudo systemctl status ollama
-sudo journalctl -u ollama -f          # tail logs
-sudo systemctl restart ollama
-```
-
-Pulled models live in `/usr/share/ollama/.ollama/` (not `~/.ollama` like macOS).
-
-## Restricted environments / custom ports
-
-If you can't use the default ports (8080 for the main API, 8081 for the MCP server) — because they're taken, firewall policy pins specific ports, or you need to bind to a single interface rather than all — every bind is controlled by env vars. No code changes, no Dockerfile edits.
-
-### Env vars
-
-| Var | Default | Effect |
-|---|---|---|
-| `SERVICE_HOST` | `0.0.0.0` | Uvicorn bind address for the main API. Use `127.0.0.1` for loopback-only, or a specific NIC address to restrict which interface accepts traffic. |
-| `SERVICE_PORT` | `8080` | Uvicorn port for the main API. Compose passes this into the container **and** onto both sides of the host:container port map, so a single change moves everything. |
-| `SERVICE_PUBLISH_PORT` | `SERVICE_PORT` | Host-side publish port when it needs to differ from the container bind (e.g. bind to 8080 inside, publish on 9080 outside because 8080 is taken on the host). Compose only. |
-| `MCP_HOST` | `0.0.0.0` | Bind for the MCP HTTP server. |
-| `MCP_PORT` | `8081` | Port for the MCP HTTP server. Compose also propagates this into `TEXT_CHECKER_URL` for the MCP → main hop. |
-| `MCP_PUBLISH_PORT` | `MCP_PORT` | Host-side publish port for MCP (compose only). |
-
-### Recipes
-
-**Move the main API to port 9080 (compose):**
-```bash
-SERVICE_PORT=9080 docker compose up -d
-# healthz:  http://localhost:9080/healthz
-```
-
-**Bind main API to loopback only, publish externally on a different port:**
-```bash
-# Container listens on 0.0.0.0:8080 (compose default); host publishes on 9080.
-SERVICE_PUBLISH_PORT=9080 docker compose up -d
-```
-
-**Bare-metal (make dev):**
-```bash
-SERVICE_HOST=127.0.0.1 SERVICE_PORT=9080 make dev
-```
-
-**Bare-metal (systemd):** put the values in `/opt/text-checker/.env.prod`:
-```bash
-SERVICE_HOST=127.0.0.1
-SERVICE_PORT=9080
-```
-Then `sudo systemctl restart text-checker`.
-
-**Run the MCP server on a non-default port with loopback binding:**
-```bash
-MCP_HOST=127.0.0.1 MCP_PORT=9091 MCP_API_KEY=... text-checker-mcp --http
-```
-
-### Client-side implications
-
-Every callable client honors the same knobs, so nothing else needs to change:
-- `text-checker-check --server http://localhost:9080` (or `TEXT_CHECKER_URL` env)
-- RAG CLI `--server http://localhost:9080` (or `TEXT_CHECKER_URL` env)
-- MCP server calling the main API: `TEXT_CHECKER_URL=http://service:${SERVICE_PORT}` (compose sets this automatically)
-- `.vscode/mcp.json` uses whatever URL you point it at
-
-If you run the service inside a container network on the default 8080 but publish externally on a different port, keep `TEXT_CHECKER_URL` pointing at the **internal** port for MCP → service traffic — MCP is on the same compose network.
-
-## Running behind a corporate proxy
-
-The service uses `httpx` for all outbound calls, and `httpx` reads `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the environment automatically. **No Python code changes are needed** — just set the env vars correctly across every layer.
-
-### Required env vars
-
-```bash
-export HTTPS_PROXY=http://proxy.corp.example:8080
-export HTTP_PROXY=http://proxy.corp.example:8080
-# Critical: bypass the proxy for local Ollama and any internal hostnames.
-# Missing this is the most common proxy mistake.
-export NO_PROXY=localhost,127.0.0.1,ollama,service,prometheus
-```
-
-For a persistent setup, put the same lines in `.env` (the `.env.example` file shows them commented out).
-
-### Ollama under systemd needs its own proxy config
-
-The service env vars do **not** propagate to the Ollama daemon. To pull models through the proxy, override the systemd unit:
-
-```bash
-sudo systemctl edit ollama
-```
-
-Add:
-
-```ini
-[Service]
-Environment="HTTPS_PROXY=http://proxy.corp.example:8080"
-Environment="HTTP_PROXY=http://proxy.corp.example:8080"
-Environment="NO_PROXY=localhost,127.0.0.1"
-```
-
-Then:
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl restart ollama
-```
-
-If running Ollama manually (`ollama serve` in a terminal), just export the vars in that shell first.
-
-### Docker build behind a proxy
-
-The Dockerfile accepts proxy as build args (needed for `uv sync` to reach PyPI):
-
-```bash
-docker build \
-  --build-arg HTTP_PROXY=$HTTP_PROXY \
-  --build-arg HTTPS_PROXY=$HTTPS_PROXY \
-  --build-arg NO_PROXY=$NO_PROXY \
-  -t text-checker:dev .
-```
-
-### docker-compose behind a proxy
-
-The compose file passes proxy env vars through to both `service` and `ollama` containers automatically when set in your shell:
-
-```bash
-export HTTPS_PROXY=http://proxy.corp.example:8080
-export NO_PROXY=localhost,127.0.0.1,ollama,service,prometheus
-docker compose up --build
-```
-
-`NO_PROXY` **must** include the compose service names (`ollama`, `service`, `prometheus`) — otherwise inter-container HTTP calls get sent through the external proxy and fail.
-
-### Corporate TLS-intercepting proxies (custom CA)
-
-Many corporate proxies decrypt outbound HTTPS using their own root CA. Python's `ssl` module needs that CA to trust the proxy:
-
-```bash
-# bare metal
-export SSL_CERT_FILE=/etc/pki/ca-trust/source/anchors/corp-ca.pem
-
-# or update the system trust store on RHEL
-sudo cp corp-ca.pem /etc/pki/ca-trust/source/anchors/
-sudo update-ca-trust
-```
-
-For Docker, mount the CA into the container:
-
-```yaml
-# docker-compose.yml override
-services:
-  service:
-    volumes:
-      - /etc/pki/ca-trust/source/anchors/corp-ca.pem:/etc/ssl/certs/corp-ca.pem:ro
-    environment:
-      SSL_CERT_FILE: /etc/ssl/certs/corp-ca.pem
-```
-
-The compose file's `SSL_CERT_FILE: ${SSL_CERT_FILE:-}` line already forwards the variable from your shell — combined with a volume mount in an override file, that's enough.
-
-### Verifying the proxy setup
-
-```bash
-# proxy reachable
-curl --proxy $HTTPS_PROXY -sI https://api.openai.com/v1/models | head -1
-
-# from inside the running service container
-docker compose exec service python -c \
-  "import httpx; print(httpx.get('https://api.openai.com/v1/models', timeout=10).status_code)"
-```
-
-Both should return a non-zero exit and a valid HTTP status (401 from OpenAI is fine — it means the request reached them).
 
 ## Configuration
 
@@ -1487,6 +1204,293 @@ One JSON line per request via `structlog`:
 
 - `/healthz` — process is alive; never gates on upstreams
 - `/readyz` — actively probes Ollama and Redis (if configured); 200 when ready, 503 otherwise. 5 s response cache. See [API reference](#get-readyz) for the response shape.
+
+## Running in production (single replica)
+
+Two paths: Docker Compose (recommended) or bare-metal systemd (for RHEL without Docker). See [ADR-0014](docs/decisions/0014-single-replica-production-deployment.md) for the design rationale.
+
+### Docker Compose path
+
+```bash
+# 1. Copy and fill in secrets
+cp .env.prod.example .env.prod
+$EDITOR .env.prod   # set API_KEYS, model name, proxy if needed
+
+# 2. Build the image once
+docker build -t text-checker:latest .
+
+# 3. Pull Ollama models inside the container
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d ollama
+docker compose exec ollama ollama pull qwen2.5:7b-instruct
+docker compose exec ollama ollama pull nomic-embed-text
+
+# 4. Start everything
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+
+# 5. Verify
+curl -s http://localhost:8080/readyz | jq
+# expect: {"status":"ready","components":{"provider:ollama":"ok","redis":"ok"}}
+```
+
+Services restart automatically on crash or reboot (`restart: unless-stopped`). The `./data/` directory (glossary + RAG vector store) is bind-mounted so it survives container rebuilds.
+
+### Bare-metal systemd path (RHEL / Ubuntu)
+
+```bash
+# 1. Create a dedicated user
+sudo useradd -r -s /sbin/nologin text-checker
+
+# 2. Clone to /opt and install deps
+sudo git clone https://github.com/skyakash/text-checker.git /opt/text-checker
+cd /opt/text-checker && sudo uv sync --no-dev
+sudo cp .env.prod.example .env.prod && sudo $EDITOR .env.prod
+
+# 3. Install and start the systemd unit
+sudo cp deploy/text-checker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now text-checker
+
+# 4. Install log rotation
+sudo cp deploy/logrotate.conf /etc/logrotate.d/text-checker
+```
+
+### Backup and restore
+
+```bash
+# Backup (./data/ → timestamped tarball; old backups auto-pruned after 30 days)
+./scripts/backup.sh
+
+# Restore
+tar -xzf backups/text-checker-data-2026-06-25T10-30-00.tar.gz
+```
+
+### Updating
+
+```bash
+# For Docker Compose: backs up, pulls code, rebuilds image, restarts, polls /readyz
+./scripts/update.sh
+
+# For bare-metal systemd:
+cd /opt/text-checker
+sudo git pull --ff-only
+sudo uv sync --no-dev
+sudo systemctl restart text-checker
+```
+
+## Running on Linux / RHEL
+
+Same `make install` / `make dev` workflow as macOS. Platform-specific notes only.
+
+### Bare-metal install on RHEL 9
+
+```bash
+# Optional: build deps for any wheels that need compilation.
+# Most wheels (chromadb, lxml, pdfplumber) ship binary; this is only needed
+# in restricted environments.
+sudo dnf install -y gcc python3.12-devel
+
+# uv + ollama
+curl -LsSf https://astral.sh/uv/install.sh | sh
+curl -fsSL https://ollama.com/install.sh | sh   # registers ollama as a systemd service
+
+# clone, install, run
+git clone https://github.com/skyakash/text-checker.git
+cd text-checker
+make install
+make dev
+```
+
+### Open the firewall
+
+```bash
+sudo firewall-cmd --add-port=8080/tcp --permanent
+sudo firewall-cmd --reload
+```
+
+### SELinux and Docker bind-mounts
+
+If you bind-mount `./data/` into the container for persistence (instead of using a named volume), SELinux will block the container from reading or writing it. Append `:Z` to the mount so Docker relabels it:
+
+```yaml
+volumes:
+  - ./data:/app/data:Z
+```
+
+Named volumes (the compose file's default for Ollama) don't have this problem.
+
+### Managing Ollama under systemd
+
+The Linux installer registers Ollama as a unit. Useful commands:
+
+```bash
+sudo systemctl status ollama
+sudo journalctl -u ollama -f          # tail logs
+sudo systemctl restart ollama
+```
+
+Pulled models live in `/usr/share/ollama/.ollama/` (not `~/.ollama` like macOS).
+
+## Running behind a corporate proxy
+
+The service uses `httpx` for all outbound calls, and `httpx` reads `HTTPS_PROXY` / `HTTP_PROXY` / `NO_PROXY` from the environment automatically. **No Python code changes are needed** — just set the env vars correctly across every layer.
+
+### Required env vars
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example:8080
+export HTTP_PROXY=http://proxy.corp.example:8080
+# Critical: bypass the proxy for local Ollama and any internal hostnames.
+# Missing this is the most common proxy mistake.
+export NO_PROXY=localhost,127.0.0.1,ollama,service,prometheus
+```
+
+For a persistent setup, put the same lines in `.env` (the `.env.example` file shows them commented out).
+
+### Ollama under systemd needs its own proxy config
+
+The service env vars do **not** propagate to the Ollama daemon. To pull models through the proxy, override the systemd unit:
+
+```bash
+sudo systemctl edit ollama
+```
+
+Add:
+
+```ini
+[Service]
+Environment="HTTPS_PROXY=http://proxy.corp.example:8080"
+Environment="HTTP_PROXY=http://proxy.corp.example:8080"
+Environment="NO_PROXY=localhost,127.0.0.1"
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+If running Ollama manually (`ollama serve` in a terminal), just export the vars in that shell first.
+
+### Docker build behind a proxy
+
+The Dockerfile accepts proxy as build args (needed for `uv sync` to reach PyPI):
+
+```bash
+docker build \
+  --build-arg HTTP_PROXY=$HTTP_PROXY \
+  --build-arg HTTPS_PROXY=$HTTPS_PROXY \
+  --build-arg NO_PROXY=$NO_PROXY \
+  -t text-checker:dev .
+```
+
+### docker-compose behind a proxy
+
+The compose file passes proxy env vars through to both `service` and `ollama` containers automatically when set in your shell:
+
+```bash
+export HTTPS_PROXY=http://proxy.corp.example:8080
+export NO_PROXY=localhost,127.0.0.1,ollama,service,prometheus
+docker compose up --build
+```
+
+`NO_PROXY` **must** include the compose service names (`ollama`, `service`, `prometheus`) — otherwise inter-container HTTP calls get sent through the external proxy and fail.
+
+### Corporate TLS-intercepting proxies (custom CA)
+
+Many corporate proxies decrypt outbound HTTPS using their own root CA. Python's `ssl` module needs that CA to trust the proxy:
+
+```bash
+# bare metal
+export SSL_CERT_FILE=/etc/pki/ca-trust/source/anchors/corp-ca.pem
+
+# or update the system trust store on RHEL
+sudo cp corp-ca.pem /etc/pki/ca-trust/source/anchors/
+sudo update-ca-trust
+```
+
+For Docker, mount the CA into the container:
+
+```yaml
+# docker-compose.yml override
+services:
+  service:
+    volumes:
+      - /etc/pki/ca-trust/source/anchors/corp-ca.pem:/etc/ssl/certs/corp-ca.pem:ro
+    environment:
+      SSL_CERT_FILE: /etc/ssl/certs/corp-ca.pem
+```
+
+The compose file's `SSL_CERT_FILE: ${SSL_CERT_FILE:-}` line already forwards the variable from your shell — combined with a volume mount in an override file, that's enough.
+
+### Verifying the proxy setup
+
+```bash
+# proxy reachable
+curl --proxy $HTTPS_PROXY -sI https://api.openai.com/v1/models | head -1
+
+# from inside the running service container
+docker compose exec service python -c \
+  "import httpx; print(httpx.get('https://api.openai.com/v1/models', timeout=10).status_code)"
+```
+
+Both should return a non-zero exit and a valid HTTP status (401 from OpenAI is fine — it means the request reached them).
+
+## Restricted environments / custom ports
+
+If you can't use the default ports (8080 for the main API, 8081 for the MCP server) — because they're taken, firewall policy pins specific ports, or you need to bind to a single interface rather than all — every bind is controlled by env vars. No code changes, no Dockerfile edits.
+
+### Env vars
+
+| Var | Default | Effect |
+|---|---|---|
+| `SERVICE_HOST` | `0.0.0.0` | Uvicorn bind address for the main API. Use `127.0.0.1` for loopback-only, or a specific NIC address to restrict which interface accepts traffic. |
+| `SERVICE_PORT` | `8080` | Uvicorn port for the main API. Compose passes this into the container **and** onto both sides of the host:container port map, so a single change moves everything. |
+| `SERVICE_PUBLISH_PORT` | `SERVICE_PORT` | Host-side publish port when it needs to differ from the container bind (e.g. bind to 8080 inside, publish on 9080 outside because 8080 is taken on the host). Compose only. |
+| `MCP_HOST` | `0.0.0.0` | Bind for the MCP HTTP server. |
+| `MCP_PORT` | `8081` | Port for the MCP HTTP server. Compose also propagates this into `TEXT_CHECKER_URL` for the MCP → main hop. |
+| `MCP_PUBLISH_PORT` | `MCP_PORT` | Host-side publish port for MCP (compose only). |
+
+### Recipes
+
+**Move the main API to port 9080 (compose):**
+```bash
+SERVICE_PORT=9080 docker compose up -d
+# healthz:  http://localhost:9080/healthz
+```
+
+**Bind main API to loopback only, publish externally on a different port:**
+```bash
+# Container listens on 0.0.0.0:8080 (compose default); host publishes on 9080.
+SERVICE_PUBLISH_PORT=9080 docker compose up -d
+```
+
+**Bare-metal (make dev):**
+```bash
+SERVICE_HOST=127.0.0.1 SERVICE_PORT=9080 make dev
+```
+
+**Bare-metal (systemd):** put the values in `/opt/text-checker/.env.prod`:
+```bash
+SERVICE_HOST=127.0.0.1
+SERVICE_PORT=9080
+```
+Then `sudo systemctl restart text-checker`.
+
+**Run the MCP server on a non-default port with loopback binding:**
+```bash
+MCP_HOST=127.0.0.1 MCP_PORT=9091 MCP_API_KEY=... text-checker-mcp --http
+```
+
+### Client-side implications
+
+Every callable client honors the same knobs, so nothing else needs to change:
+- `text-checker-check --server http://localhost:9080` (or `TEXT_CHECKER_URL` env)
+- RAG CLI `--server http://localhost:9080` (or `TEXT_CHECKER_URL` env)
+- MCP server calling the main API: `TEXT_CHECKER_URL=http://service:${SERVICE_PORT}` (compose sets this automatically)
+- `.vscode/mcp.json` uses whatever URL you point it at
+
+If you run the service inside a container network on the default 8080 but publish externally on a different port, keep `TEXT_CHECKER_URL` pointing at the **internal** port for MCP → service traffic — MCP is on the same compose network.
 
 ## Testing
 
