@@ -10,8 +10,8 @@ Complete task list for text-checker, updated as work progresses.
 
 | Status | Count |
 |---|---|
-| ✅ Done | 29 |
-| 🔵 Planned | 1 |
+| ✅ Done | 30 |
+| 🔵 Planned | 0 |
 | 🟡 Deferred | 9 |
 | ⏭ Skipped / Superseded | 2 |
 
@@ -80,7 +80,7 @@ Implementation order and full specs: [plan-mcp-and-integrations.md](plan-mcp-and
 | 28 | Jira Bot integration | ✅ Done | docs/integrations/jira-bot.md — webhook → bot → HTTP or MCP bridge with Python example; security notes; both HTTP-API and MCP paths documented |
 | 30 | ADRs + docs sweep | ✅ Done | ADR-0015 + ADR-0016 written and indexed; concepts.md updated; README updated |
 | ~~29~~ | ~~GitHub Actions via raw curl~~ | ⏭ Superseded | Folded into #33 — the client CLI is the supported pipeline path |
-| 40 | Env-driven main HTTP bind (`SERVICE_HOST`/`SERVICE_PORT`) | 🔵 Planned | Main service bind is currently a uvicorn CLI arg hardcoded in four places (Makefile, systemd unit, docker-compose, direct invocations). Mirror the MCP shape (`MCP_HOST`/`MCP_PORT` already env-driven since A5). ~10 min work; makes restricted-env deployments uniform. |
+| 40 | Env-driven main HTTP bind (`SERVICE_HOST`/`SERVICE_PORT`) | ✅ Done | Env vars honored by Makefile, Dockerfile (with signal-safe exec CMD), systemd unit, and docker-compose (both container bind and host publish, plus `SERVICE_PUBLISH_PORT` for split-port cases). MCP compose service `TEXT_CHECKER_URL` tracks `SERVICE_PORT` so the MCP → main hop follows moves. Live-verified on port 9090. README "Restricted environments / custom ports" section documents recipes. |
 
 ---
 
