@@ -36,7 +36,7 @@ is never opened by the MCP process.
 - `correct_text(text, mode, model?)` → `POST /v1/correct`
 - `list_modes()` → `GET /v1/modes`
 - `list_models()` → `GET /v1/models` (returns `[{provider, model}]`)
-- `ingest_document(content, source, section?)` → `POST /v1/rag/ingest`
+- `ingest_document(content, source, label?)` → `POST /v1/rag/ingest`
 
 `ingest_document` is deliberately part of the surface so an authorised
 bot (or a developer via chat) can push new product docs into the shared

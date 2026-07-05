@@ -173,7 +173,7 @@ Three shipped integrations use this MCP server or the plain HTTP API:
 | `correct_text` | `text: str`, `mode: str`, `model: str \| None` | full `/v1/correct` response: `corrected_text`, `diff[]`, `flagged`, `flag_reason`, `rag_context_used[]`, `metrics` |
 | `list_modes` | — | `["grammar", "style", "jira-story", "release-note"]` |
 | `list_models` | — | `[{provider, model}]` — round-trip any entry back as `provider:model` in `correct_text` |
-| `ingest_document` | `content: str`, `source: str`, `section: str \| None` | `{source, chunks_indexed}` |
+| `ingest_document` | `content: str`, `source: str`, `label: str \| None` | `{source, chunks_indexed}` |
 
 `ingest_document` lets a Jira Bot or a developer in chat push new product docs into the shared RAG store at runtime — no shell access to the server required.
 
