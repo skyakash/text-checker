@@ -1089,6 +1089,26 @@ _Illustrative_ — what the same call returns after `ANTHROPIC_API_KEY` and `CUS
 
 See [ADR-0016](docs/decisions/0016-provider-model-routing.md) for the design rationale.
 
+### Split embedding and chat backends
+
+Not every LLM host exposes an embedding endpoint. A common production shape is a beefy shared chat server (llama.cpp, vLLM, or a hosted API) that only speaks `/v1/chat/completions`, plus a small local Ollama for embeddings. RAG needs both, so a naive `OLLAMA_BASE_URL=<chat-server>` returns 501 from `/v1/embeddings` the first time a `release-note` or `style` correction runs.
+
+Point the two knobs at two hosts:
+
+```bash
+# chat completions on the shared server
+OLLAMA_BASE_URL=http://chat-server.internal:11434/v1
+DEFAULT_MODEL=<the model name that server serves>
+
+# embeddings on a local Ollama with nomic-embed-text
+RAG_EMBEDDING_BASE_URL=http://localhost:11434/v1
+RAG_EMBEDDING_MODEL=nomic-embed-text
+```
+
+`RAG_EMBEDDING_BASE_URL` falls back to `OLLAMA_BASE_URL` when unset, which is why the single-host case just works — you only reach for it when the chat host lacks an embedding endpoint. The embedding host does not need to be OpenAI-compatible in the strict sense; any `/v1/embeddings` implementation that returns `{"data": [{"embedding": [...]}]}` works. On the local Ollama box: `ollama pull nomic-embed-text` once, and no other config is needed there.
+
+One warning: **if you switch embedding models after ingesting docs, re-ingest.** Chunks embedded with one model produce vectors that aren't comparable to another model's vectors — retrieval scores drop to noise. Use `python -m text_checker.rag reset` to wipe, then re-ingest with the new model.
+
 ## Use from VS Code Copilot Chat (MCP)
 
 text-checker ships an MCP server so any MCP-aware chat panel — including GitHub Copilot Chat in VS Code and Claude Code — can call it as a tool. All pipeline guardrails (masking, hallucination guard, RAG grounding) apply to MCP consumers because the MCP server is a thin proxy of `/v1/correct` under the hood.

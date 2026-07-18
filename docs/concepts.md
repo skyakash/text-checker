@@ -66,6 +66,8 @@ LLM now "knows" your product docs for this request
 
 The LLM never sees your whole document library — only the 3–5 chunks most relevant to the current input. This keeps the prompt short and the answer focused.
 
+> **Embedding and chat can live on different hosts.** RAG needs an embedding endpoint (`/v1/embeddings`); the chat model does not have to expose one. Set `RAG_EMBEDDING_BASE_URL` if the LLM host doesn't ship embeddings — see the [README's "Split embedding and chat backends"](../README.md#split-embedding-and-chat-backends) recipe.
+
 ### Why RAG instead of fine-tuning?
 
 | | RAG | Fine-tuning |
